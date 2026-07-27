@@ -9,10 +9,25 @@ ce repo ; copie déployée : `~/.claude/` sur chaque machine.
   pour ne pas être auto-chargé comme mémoire de sous-dossier quand on travaille dans ce repo.
 - `hooks/block_cloud_cache.py` — hook PreToolUse : bloque toute écriture dans
   `local-agent-mode-sessions` (cache cloud volatile, toute édition y est perdue).
-- `hooks/block_git_add_all.py` — hook PreToolUse : bloque `git add -A` / `--all` / `.`
+- `hooks/block_git_add_all.py` — hook PreToolUse : refuse tout `git add` non scopé au chantier
   (incident : 4 545 lignes de suppression avalées par le commit d'une autre session).
+- `tests/test_hooks.py` — test de contournement des deux hooks. 39 cas, `exit 0` = vert.
+- `deploy.ps1` — déploie et vérifie la conformité. Refuse de déployer si le golden est rouge.
+- `settings.hooks.json` — le fragment de référence à fusionner dans `settings.json`.
 
 ## Déploiement sur une machine
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy.ps1            # déployer
+powershell -ExecutionPolicy Bypass -File deploy.ps1 -Verifier  # constater une dérive, n'écrit rien
+```
+
+`deploy.ps1` fait les étapes 1-2 ci-dessous, vérifie l'étape 3 sans jamais réécrire
+`settings.json` (c'est de la config utilisateur : modèle, plugins, thème), et refuse de
+déployer un hook dont le golden est rouge. Il vérifie aussi qu'aucune **clé non documentée**
+ne traîne dans une entrée de hook — c'est ce qui aurait attrapé l'incident du `if` (cf. Pièges).
+
+Les étapes manuelles restent documentées pour une machine sans PowerShell :
 
 1. Copier `CLAUDE-global.md` → `~/.claude/CLAUDE.md`.
 2. Copier `hooks/*.py` → `~/.claude/hooks/`.
@@ -58,6 +73,26 @@ ce repo ; copie déployée : `~/.claude/` sur chaque machine.
    aussi qu'un cas légitime PASSE — `git add <fichier>` — sinon on a prouvé un blocage
    aveugle, pas un garde-fou.
 
+## Durcissement du 2026-07-27 (test de contournement)
+
+« Un garde-fou qu'on n'a pas essayé de contourner est décoratif. » Les deux hooks ont été
+attaqués : **5 trous sur 13 cas**. Chacun est devenu un cas permanent de `tests/test_hooks.py`.
+
+| Contournement | avant | après |
+|---|---|---|
+| `git add --al` — git accepte tout préfixe non ambigu (vérifié en live : stage tout le repo) | passait | bloqué |
+| `git add -u` — stage toutes les suppressions suivies = **l'incident d'origine** | passait | bloqué |
+| `git add *` — glob expansé par le shell | passait | bloqué |
+| `git add :/` — pathspec racine, depuis n'importe quel sous-dossier | passait | bloqué |
+| Écriture dans le cache via `cp` / `Copy-Item` / `>` (matcher `Edit\|Write` seul) | passait | bloqué |
+| Entrée JSON illisible | fail-**open** | fail-**closed** (`exit 2`) |
+
+Un faux positif corrigé dans la foulée : un message de commit qui *documente* l'incident était
+lu comme une commande. Le contenu d'un `-m` / `-F` est du texte, il est retiré avant analyse.
+
+`git commit -a` n'est pas traité par les hooks : il est tenu par la permission `ask` sur
+`Bash(git commit:*)`. Une règle vit à un seul étage.
+
 ## Rituel trimestriel (règle de maintenance)
 
 1. Relire `CLAUDE-global.md` règle par règle : Claude l'a-t-il violée ce trimestre ?
@@ -87,4 +122,22 @@ ce repo ; copie déployée : `~/.claude/` sur chaque machine.
   fin appartient au script, qui lui échoue bruyamment. Et prouver le blocage sur **chaque**
   outil couvert par le matcher, pas sur un seul — un `exit 2` obtenu via Bash ne dit rien
   de PowerShell. Une preuve partielle est ce qui rend un garde-fou décoratif sans qu'on le
-  sache.
+  sache. *Depuis le 27/07, `deploy.ps1` refuse toute clé non documentée dans une entrée de hook.*
+
+- **Encodage Windows : deux fois la même racine, deux symptômes sans rapport apparent** (27/07).
+  Un `.ps1` écrit en UTF-8 est lu en CP1252 par Windows PowerShell 5.1 : un em dash (`E2 80 94`)
+  devient `â€"` dont l'octet `0x94` est un guillemet typographique fermant, que le parser traite
+  comme **délimiteur de chaîne**. Erreur incompréhensible, pointant une ligne sans rapport.
+  Symétriquement, la sortie d'un script Python lue par un appelant en UTF-8 lève
+  `UnicodeDecodeError` parce que la console encode en CP1252.
+
+  Règle : **le texte destiné à une machine sort en UTF-8 forcé**
+  (`sys.stdout.reconfigure(encoding="utf-8")`) ; **le code destiné à PowerShell 5.1 s'écrit
+  en ASCII strict**. Les accents dans un commentaire PowerShell sont sans danger — seuls les
+  caractères qui se décodent en guillemet cassent le parsing.
+
+- **Deux sources de vérité créées le même jour** (27/07). Ce repo a été créé à 14h56 ; une
+  session ouverte ailleurs a reconstruit la même chose à 17h dans `un-projet/claude-global/`,
+  sans le voir. Les deux étaient poussées. Consolidé ici, `claude-global/` supprimé.
+  Règle : avant de créer un foyer pour quelque chose de transverse, `gh repo list` — la liste
+  des dépôts est la seule vue exhaustive, un `find` local ne voit pas ce qui n'est pas cloné.
