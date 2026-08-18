@@ -5,7 +5,31 @@
       "Bash(git commit:*)"
     ]
   },
+  "_commentaire_lecons": "SessionStart + PostToolUse (2026-08-18) : les deux moities du skill lecon-de-repo. AUCUNE cle 'if' — incident du 2026-07-27, une cle non documentee desactive le hook en silence ; le filtrage se fait dans le script.",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"<HOME>/.claude/hooks/inject_lecons.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"<HOME>/.claude/hooks/rappel_lecon.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|NotebookEdit",

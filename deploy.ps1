@@ -75,20 +75,26 @@ if (-not (Test-Path $fichierSettings)) {
     Write-Host "      ABSENT : creer settings.json depuis settings.hooks.json." -ForegroundColor Red
     exit 2
 }
-$declares = (Get-Content $fichierSettings -Raw | ConvertFrom-Json).hooks.PreToolUse |
-            ForEach-Object { $m = $_.matcher; $_.hooks | ForEach-Object { "$m => $($_.command)" } }
+$conf = Get-Content $fichierSettings -Raw | ConvertFrom-Json
 
+# La verification couvre TOUS les evenements declares, pas seulement PreToolUse :
+# un hook non verifie est un hook dont on ne sait pas s'il tourne (2026-08-18).
 $attendus = @(
-    @{ matcher = "Edit|Write|NotebookEdit"; hook = "block_cloud_cache.py" },
-    @{ matcher = "Bash|PowerShell";         hook = "block_git_add_all.py" },
-    @{ matcher = "Bash|PowerShell";         hook = "block_cloud_cache.py" }
+    @{ event = "PreToolUse";   matcher = "Edit|Write|NotebookEdit"; hook = "block_cloud_cache.py" },
+    @{ event = "PreToolUse";   matcher = "Bash|PowerShell";         hook = "block_git_add_all.py" },
+    @{ event = "PreToolUse";   matcher = "Bash|PowerShell";         hook = "block_cloud_cache.py" },
+    @{ event = "SessionStart"; matcher = "";                        hook = "inject_lecons.py" },
+    @{ event = "PostToolUse";  matcher = "Bash|PowerShell";         hook = "rappel_lecon.py" }
 )
 foreach ($a in $attendus) {
+    $declares = $conf.hooks.($a.event) |
+                ForEach-Object { $m = $_.matcher; $_.hooks | ForEach-Object { "$m => $($_.command)" } }
     $trouve = $declares | Where-Object { $_ -like "*$($a.matcher)*$($a.hook)*" }
+    $etiquette = if ($a.matcher) { "$($a.event) $($a.matcher)" } else { $a.event }
     if ($trouve) {
-        Write-Host "      OK      $($a.matcher) -> $($a.hook)"
+        Write-Host "      OK      $etiquette -> $($a.hook)"
     } else {
-        Write-Host "      MANQUE  $($a.matcher) -> $($a.hook)" -ForegroundColor Red
+        Write-Host "      MANQUE  $etiquette -> $($a.hook)" -ForegroundColor Red
         $derive++
     }
 }
@@ -98,14 +104,16 @@ foreach ($a in $attendus) {
 # PowerShell, sans le moindre message, JSON valide). On ne peut pas prouver ce
 # qui ne s'execute pas : on refuse donc tout ce qui n'est pas documente.
 $clesConnues = @("type", "command", "timeout")
-$entrees = (Get-Content $fichierSettings -Raw | ConvertFrom-Json).hooks.PreToolUse
-foreach ($groupe in $entrees) {
-    foreach ($h in $groupe.hooks) {
-        $inconnues = $h.PSObject.Properties.Name | Where-Object { $clesConnues -notcontains $_ }
-        if ($inconnues) {
-            Write-Host "      CLE INCONNUE dans '$($groupe.matcher)' : $($inconnues -join ', ')" -ForegroundColor Red
-            Write-Host "        -> une cle non documentee peut desactiver le hook sans erreur."
-            $derive++
+foreach ($evenement in $conf.hooks.PSObject.Properties.Name) {
+    foreach ($groupe in $conf.hooks.$evenement) {
+        foreach ($h in $groupe.hooks) {
+            $inconnues = $h.PSObject.Properties.Name | Where-Object { $clesConnues -notcontains $_ }
+            if ($inconnues) {
+                $ou = if ($groupe.matcher) { "$evenement '$($groupe.matcher)'" } else { $evenement }
+                Write-Host "      CLE INCONNUE dans $ou : $($inconnues -join ', ')" -ForegroundColor Red
+                Write-Host "        -> une cle non documentee peut desactiver le hook sans erreur."
+                $derive++
+            }
         }
     }
 }
