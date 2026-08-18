@@ -16,11 +16,14 @@ re-testees des deux cotes.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 PLAFOND = 15  # au-dela, on cite le nombre restant plutot que d'inonder le contexte
+# Une fiche restee au squelette genere par lecon.py n'apprend rien : ne pas l'injecter.
+PLACEHOLDER = re.compile(r"^<.+>$", re.M)
 
 
 def racine_git(depart: Path):
@@ -54,6 +57,9 @@ def lire_frontmatter(path: Path) -> dict:
             continue
         cle, _, val = ligne.partition(":")
         val = val.strip()
+        # Un commentaire YAML n'est pas une valeur (meme correctif que lecon.py,
+        # audit du 2026-08-18 : le frontmatter documente etait illisible).
+        val = re.split(r"\s+#", val, maxsplit=1)[0].strip()
         if val.startswith("[") and val.endswith("]"):
             fm[cle.strip()] = [v.strip() for v in val[1:-1].split(",") if v.strip()]
         else:
@@ -70,6 +76,8 @@ def contexte(racine: Path) -> str:
         fm = lire_frontmatter(path)
         if not fm or str(fm.get("statut", "")).startswith("supersede-par:"):
             continue
+        if PLACEHOLDER.search(path.read_text(encoding="utf-8", errors="replace")):
+            continue  # squelette non rempli : rien a transmettre
         tags = fm.get("tags") or []
         actives.append(
             "- {titre} [{type}{tags}] - {fichier}".format(

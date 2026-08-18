@@ -175,10 +175,33 @@ def _verifier_injection():
         cas.append(("la fiche supersedee est exclue", "Fiche morte" not in texte))
         cas.append(("le compte est juste", "(1)" in texte))
 
+        # Audit du 2026-08-18 : une fiche restee au squelette passait pour saine.
+        (racine / "lecons" / "2026-01-01-squelette.md").write_text(
+            "---\ntitre: Squelette\ndate: 2026-01-01\ntype: bug\ntags: []\n"
+            "fichiers: []\ncommit: abc1234\nstatut: actif\n---\n\n"
+            "<ce qu'on a vu, une phrase>\n", encoding="utf-8")
+        cas.append(("AUDIT 18/08 : fiche restee squelette -> exclue",
+                    "Squelette" not in contexte(racine)))
+
+        # Audit du 2026-08-18 : le commentaire YAML etait lu comme une valeur.
+        (racine / "lecons" / "2026-01-01-commentee.md").write_text(
+            "---\ntitre: Commentee\ndate: 2026-01-01\n"
+            "type: bug            # bug | convention | workflow\ntags: []\n"
+            "fichiers: []\ncommit: abc1234\nstatut: actif\n---\n\nCorps rempli.\n",
+            encoding="utf-8")
+        texte = contexte(racine)
+        cas.append(("AUDIT 18/08 : commentaire YAML ignore dans la valeur",
+                    "[bug]" in texte and "#" not in texte))
+
         for i in range(20):
             _fiche(racine / "lecons", f"masse-{i:02d}", f"Fiche {i:02d}")
+        import re as _re
         texte = contexte(racine)
-        cas.append(("plafond a 15 + reste annonce", "+6 autres" in texte))
+        # Derive du total annonce plutot que code en dur : ajouter un cas au-dessus
+        # ne doit pas casser ce test pour une mauvaise raison.
+        total = int(_re.search(r"repo \((\d+)\)", texte).group(1))
+        cas.append(("plafond a 15 + reste annonce",
+                    f"+{total - 15} autres" in texte and texte.count("\n- ") == 16))
 
         for note, ok in cas:
             echecs += not ok
