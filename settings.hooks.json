@@ -1,5 +1,10 @@
 {
   "_commentaire": "Fragment de reference — a fusionner dans ~/.claude/settings.json. deploy.ps1 VERIFIE la presence de ces entrees, il ne reecrit jamais settings.json (config utilisateur : on ne patche pas du JSON a l'aveugle).",
+  "_commentaire_env": "Audit forfait 2026-08-19 : 91 % de la conso = contexte (sessions > 200k, rechauffages cache). AUTO_COMPACT_WINDOW=120000 => compaction auto vers ~100k ; SUBAGENT_MODEL=sonnet => sous-agents sur Sonnet 5 sauf 'model:' dans .claude/agents/*.md. Verifier en session : /autocompact.",
+  "env": {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "120000",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"
+  },
   "permissions": {
     "ask": [
       "Bash(git commit:*)"
