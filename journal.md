@@ -38,17 +38,57 @@
   20/08 : `un-autre-projet`, `un-second-projet`, `un-projet` l'ont à la racine ; aucun
   `docs/journal.md` n'existe nulle part. Le hook accepte les deux, racine d'abord.
 
+- **`ECHEC.log` est redevenu un signal.** `~/.claude/checkpoints/ECHEC.log` est **vide
+  (0 o)** depuis le 20/08 15:32. Les 12 lignes qu'il contenait n'étaient **aucun échec
+  réel** : c'était la golden qui écrivait ses propres échecs volontaires dans le vrai
+  dossier. Corrigé (commit `76d38af`), vérifié après coup : golden VERT et le fichier
+  reste à 0 o. **Désormais une seule ligne dans ce fichier = une vraie compaction en
+  échec.** 65 checkpoints `.md` en place à côté.
+
 - **En attente d'arbitrage** (rien n'est fait sans « oui ») : baisser
   `CLAUDE_CODE_AUTO_COMPACT_WINDOW` de 120000 à 100000 dans `settings.json` (sauvegarde
   `settings.json.bak-2026-08-19` en place) ; ajouter à `CLAUDE-global.md` les deux règles
   « `/compact` avant la pause » et « ce qui compte s'écrit dans un fichier, pas dans le
-  contexte » ; ouvrir `~/.claude/checkpoints/ECHEC.log` (242 o, 19/08 19:10), jamais lu.
+  contexte ».
 
 - **Re-mesure prévue vers le 2026-09-02** : `python audit/audit_usage.py 14`, pour voir si
   le checkpoint + le journal ont fait baisser la part de réchauffage (88 % du `cache_write`
   des grosses sessions au 19/08, ≈ 24 % de la facture 60 jours).
 
 ## Log (append-only)
+
+### 2026-08-20 — le test salissait la production, pas le hook
+
+**Fait.** `tests/test_hooks.py` : le cas fail-open bout-en-bout de
+`checkpoint_precompact.py` lance le hook en **sous-processus**. Impossible d'y
+monkeypatcher `DOSSIER` (constante de module dérivée de `Path.home()`), donc le test lui
+ment sur son dossier maison — `env={**os.environ, "USERPROFILE": tmp, "HOME": tmp}`.
+Commit `76d38af`, poussé.
+
+**Ce qu'on cherchait, ce qu'on a trouvé.** `ECHEC.log` (jamais lu depuis le 19/08)
+contenait 12 lignes, toutes le **même** `JSONDecodeError: Expecting property name enclosed
+in double quotes: line 1 column 2 (char 1)`. Signature reproduite en labo : elle exige une
+entrée commençant par `{` suivi d'autre chose qu'un `"`. C'est **exactement** ce que la
+golden envoie (`input="{pas du json"`). Horodatages alignés sur les runs de la suite.
+**Zéro échec de compaction réel** — 58 checkpoints écrits sans incident sur la même
+période.
+
+**La leçon, qui vaut plus que le bug.** Un test qui écrit dans l'état de production
+**détruit le signal qu'il est censé protéger** : un vrai plantage aurait été
+indistinguable du bruit de test. Le fail-open ne sert à rien si son canal d'alerte est
+pollué par ce qui le teste.
+
+**Faux départ assumé.** Première version du garde-fou : « le chemin de sortie ne contient
+pas `Path.home()` ». Faux sous Windows — les dossiers temporaires vivent dans
+`AppData\Local\Temp`, donc *sous* le home. Le cas sortait FAIL alors que l'isolation
+marchait. Remplacé par la propriété réellement visée : **la taille du vrai `ECHEC.log`
+avant/après doit être identique**.
+
+**Vérifié, pas supposé.** 1 cas devient 3 (exit 0 / échec bien tracé dans le faux home /
+vrai log inchangé en octets). Golden : **VERT, 94 cas, 0 échec** (92 avant). Vrai
+`ECHEC.log` : **1452 → 1452 o** pendant le run, puis vidé sur « oui », et **0 o après un
+run complet de la suite** — hier ce même run y ajoutait une ligne. Pas de `deploy.ps1` :
+un fichier de `tests/` n'est jamais déployé.
 
 ### 2026-08-20 — le hook du journal passe en production
 
