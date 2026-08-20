@@ -212,14 +212,21 @@ def _verifier_injection():
 def _verifier_fail_open():
     print("\n--- fail-open assume (les informatifs ne bloquent jamais) ---")
     echecs = 0
-    for hook in ("inject_lecons.py", "rappel_lecon.py"):
+    # Repertoire NEUTRE (hors repo, sans journal ni lecons) : sans lui, un hook qui se
+    # rabat sur os.getcwd() parlerait de ce repo-ci et le test echouerait pour une
+    # raison etrangere au fail-open (constate le 2026-08-20, journal.md ajoute ici).
+    import tempfile
+    _neutre = tempfile.TemporaryDirectory()
+    neutre = _neutre.name
+    for hook in ("inject_lecons.py", "rappel_lecon.py", "journal_etat.py"):
         p = subprocess.run(
             [sys.executable, str(HOOKS / hook)], input="{pas du json",
-            capture_output=True, text=True,
+            capture_output=True, text=True, cwd=neutre,
         )
         ok = p.returncode == 0 and not p.stdout.strip()
         echecs += not ok
         print(f"{'OK  ' if ok else 'FAIL'}  {hook:<62} exit={p.returncode}, muet={not p.stdout.strip()}")
+    _neutre.cleanup()
     return echecs
 
 
@@ -259,6 +266,182 @@ def _verifier_repertoire():
     return echecs
 
 
+def _verifier_checkpoint():
+    """checkpoint_precompact.py : il ecrit, il n'invente pas, et il ne bloque JAMAIS.
+
+    Un hook PreCompact qui plante bloquerait la compaction d'une session longue —
+    donc fail-open assume (l'inverse de doctrine.md principe 1, cf. docstring du hook).
+    """
+    import tempfile
+    print("\n--- checkpoint_precompact.py ---")
+    mod = _charger("checkpoint_precompact.py")
+    echecs = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        mod.DOSSIER = base / "checkpoints"
+        transcript = base / "t.jsonl"
+        transcript.write_text("\n".join([
+            json.dumps({"type": "user", "message": {"content": "DEMANDE-UNE"}}),
+            "{ligne corrompue au milieu",
+            json.dumps({"type": "user", "message": {"content": [
+                {"type": "tool_result", "content": "sortie d'outil"}]}}),
+            json.dumps({"type": "user", "message": {"content": "<system-reminder>bruit</system-reminder>"}}),
+            json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Write", "input": {"file_path": "/x/y.py"}}]}}),
+            json.dumps({"type": "user", "message": {"content": "DEMANDE-DEUX"}}),
+        ]), encoding="utf-8")
+
+        sortie = mod._rediger({"session_id": "abcd1234-ef", "transcript_path": str(transcript),
+                               "trigger": "auto", "cwd": str(base)})
+        texte = sortie.read_text(encoding="utf-8")
+        cas = [
+            ("le fichier est ecrit", sortie.is_file()),
+            ("demande verbatim conservee", "DEMANDE-UNE" in texte and "DEMANDE-DEUX" in texte),
+            ("ligne corrompue : les suivantes sont quand meme lues", "DEMANDE-DEUX" in texte),
+            ("un tool_result n'est pas une demande", "sortie d'outil" not in texte),
+            ("un system-reminder n'est pas une demande", "bruit" not in texte),
+            ("2 demandes comptees, pas 4", "2 demandes" in texte),
+            ("fichier ecrit trace", "/x/y.py" in texte),
+            ("chemin du transcript conserve", str(transcript) in texte),
+        ]
+
+        # transcript absent : on ecrit quand meme un fichier, on ne plante pas
+        vide = mod._rediger({"session_id": "zz", "transcript_path": str(base / "nexiste.jsonl"),
+                             "trigger": "manual", "cwd": str(base)})
+        cas.append(("transcript absent : fichier quand meme ecrit", vide.is_file()))
+
+        for note, ok in cas:
+            echecs += not ok
+            print(f"{'OK  ' if ok else 'FAIL'}  {note}")
+
+    # fail-open bout en bout : JSON illisible sur stdin => exit 0, la compaction passe
+    p = subprocess.run([sys.executable, str(HOOKS / "checkpoint_precompact.py")],
+                       input="{pas du json", capture_output=True, text=True)
+    ok = p.returncode == 0
+    echecs += not ok
+    print(f"{'OK  ' if ok else 'FAIL'}  fail-open : JSON illisible ne bloque pas la compaction (exit={p.returncode})")
+    return echecs
+
+
+def _verifier_journal_etat():
+    """journal_etat.py : injecte l'etat du projet, PAS le journal entier.
+
+    Enjeu du 2026-08-20 : ce hook existe pour tuer le rechauffage (88 % du cache_write
+    des grosses sessions). S'il injectait tout le journal (80 Ko sur un-autre-projet), il
+    couterait plus cher que le mal qu'il soigne. Le plafond et la selection du seul bloc
+    d'etat SONT la raison d'etre du hook, pas un detail — testes comme tels.
+    """
+    import tempfile
+    print("\n--- journal_etat.py (etat du projet a l'ouverture) ---")
+    mod = _charger("journal_etat.py")
+    echecs = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        racine = Path(tmp)
+        cas = []
+
+        cas.append(("aucun journal -> muet", mod.contexte(racine) == ""))
+
+        journal = racine / "journal.md"
+        journal.write_text("\n".join([
+            "# Journal", "", "Preambule a ne pas injecter.", "",
+            "## Etat actuel (glissant)", "", "CHANTIER-EN-COURS", "",
+            "## Log (append-only)", "",
+            "### 2026-08-20 - entree recente", "", "corps A", "",
+            "### 2026-08-19 - entree du milieu", "", "corps B", "",
+            "### 2026-08-18 - troisieme", "", "corps C", "",
+            "### 2026-08-17 - QUATRIEME-DE-TROP", "", "corps D", "",
+        ]), encoding="utf-8")
+        texte = mod.contexte(racine)
+        cas.append(("le bloc d'etat est injecte", "CHANTIER-EN-COURS" in texte))
+        cas.append(("le preambule n'est pas injecte", "Preambule" not in texte))
+        cas.append(("le corps du log n'est pas injecte", "corps A" not in texte))
+        cas.append(("les 3 dernieres entrees sont citees",
+                    "entree recente" in texte and "troisieme" in texte))
+        cas.append(("la 4e entree est exclue (plafond DERNIERES)",
+                    "QUATRIEME-DE-TROP" not in texte))
+        cas.append(("le chemin du fichier est nomme", "journal.md" in texte))
+
+        # Les vrais journaux ecrivent « Etat actuel » AVEC accent : sans normalisation,
+        # le hook retomberait sur la premiere section venue.
+        journal.write_text("\n".join([
+            "## Autre section", "", "PIEGE", "",
+            "## État actuel (glissant)", "", "BON-BLOC", "",
+        ]), encoding="utf-8")
+        texte = mod.contexte(racine)
+        cas.append(("titre accentue reconnu, pas la 1re section venue",
+                    "BON-BLOC" in texte and "PIEGE" not in texte))
+
+        # Plafond : un bloc d'etat qui enfle redevient le probleme qu'on soigne.
+        plafond = mod.PLAFOND_CAR
+        try:
+            mod.PLAFOND_CAR = 200
+            journal.write_text("## Etat actuel\n\n" + "ligne de remplissage\n" * 60,
+                               encoding="utf-8")
+            texte = mod.contexte(racine)
+            cas.append(("bloc trop long -> tronque", len(texte) < 900))
+            cas.append(("la troncature est annoncee", "tronque" in texte))
+        finally:
+            mod.PLAFOND_CAR = plafond
+
+        # Un journal sans aucune section : rien a dire, on se tait.
+        journal.write_text("# Journal\n\nque du texte libre\n", encoding="utf-8")
+        cas.append(("journal sans section '##' -> muet", mod.contexte(racine) == ""))
+
+        # Repli sur l'autre emplacement de la convention.
+        journal.unlink()
+        (racine / "docs").mkdir()
+        (racine / "docs" / "journal.md").write_text("## Etat actuel\n\nDEPUIS-DOCS\n",
+                                                    encoding="utf-8")
+        texte = mod.contexte(racine)
+        cas.append(("repli sur docs/journal.md", "DEPUIS-DOCS" in texte))
+        cas.append(("le chemin annonce est le bon", "docs/journal.md" in texte))
+
+        for note, ok in cas:
+            echecs += not ok
+            print(f"{'OK  ' if ok else 'FAIL'}  {note}")
+
+    # Mesure du 2026-08-19 : 10 sessions reelles sur 53 vivaient dans un SOUS-dossier
+    # (un-projet/skills/un-skill). Un hook qui ne regarde que le cwd serait
+    # muet la ou il sert le plus.
+    with tempfile.TemporaryDirectory() as tmp:
+        racine = Path(tmp)
+        subprocess.run([G, "init", "-q", str(racine)], capture_output=True)
+        (racine / "journal.md").write_text("## Etat actuel\n\nVU-DEPUIS-LE-FOND\n",
+                                           encoding="utf-8")
+        profond = racine / "meta" / "skills" / "mode-plan"
+        profond.mkdir(parents=True)
+        trouvee = mod.racine_git(profond)
+        ok = trouvee is not None and "VU-DEPUIS-LE-FOND" in mod.contexte(trouvee)
+        echecs += not ok
+        print(f"{'OK  ' if ok else 'FAIL'}  journal de la racine trouve depuis un sous-dossier")
+
+    # Hors repo git (ex. ouverture dans ~) : muet, et surtout exit 0.
+    p = subprocess.run([sys.executable, str(HOOKS / "journal_etat.py")],
+                       input=json.dumps({"cwd": str(Path.home())}),
+                       capture_output=True, text=True)
+    ok = p.returncode == 0
+    echecs += not ok
+    print(f"{'OK  ' if ok else 'FAIL'}  hors repo git : n'echoue pas (exit={p.returncode})")
+
+    # Contrat de sortie verifie sur du vrai stdout, pas sur la docstring.
+    with tempfile.TemporaryDirectory() as tmp:
+        racine = Path(tmp)
+        subprocess.run([G, "init", "-q", str(racine)], capture_output=True)
+        (racine / "journal.md").write_text("## Etat actuel\n\nCONTRAT\n", encoding="utf-8")
+        p = subprocess.run([sys.executable, str(HOOKS / "journal_etat.py")],
+                           input=json.dumps({"cwd": str(racine)}),
+                           capture_output=True, text=True)
+        try:
+            sortie = json.loads(p.stdout)["hookSpecificOutput"]
+            ok = (sortie["hookEventName"] == "SessionStart"
+                  and "CONTRAT" in sortie["additionalContext"])
+        except Exception:
+            ok = False
+        echecs += not ok
+        print(f"{'OK  ' if ok else 'FAIL'}  contrat SessionStart/additionalContext respecte")
+    return echecs
+
+
 if __name__ == "__main__":
     total = (
         _verifier("block_git_add_all.py", "block_git_add_all.py", CAS_GIT, "command")
@@ -268,6 +451,8 @@ if __name__ == "__main__":
         + _verifier_repertoire()
         + _verifier_injection()
         + _verifier_fail_open()
+        + _verifier_checkpoint()
+        + _verifier_journal_etat()
     )
     print(f"\n{'VERT' if total == 0 else 'ROUGE'} — {total} echec(s)")
     sys.exit(1 if total else 0)

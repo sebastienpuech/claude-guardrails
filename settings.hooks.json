@@ -11,13 +11,31 @@
     ]
   },
   "_commentaire_lecons": "SessionStart + PostToolUse (2026-08-18) : les deux moities du skill lecon-de-repo. AUCUNE cle 'if' — incident du 2026-07-27, une cle non documentee desactive le hook en silence ; le filtrage se fait dans le script.",
+  "_commentaire_checkpoint": "PreCompact (2026-08-19) : ecrit un point d'etape sur disque avant chaque compaction (auto ou /compact). Ce qui n'existait que dans la conversation survit dans ~/.claude/checkpoints/. Fail-open assume : ce hook ne doit jamais bloquer une compaction.",
+  "_commentaire_journal": "SessionStart (2026-08-20) : injecte le bloc « Etat actuel » de journal.md a l ouverture. Audit forfait : 88 % du cache_write des grosses sessions est du rechauffage (re-expliquer ou on en est). La convention journal.md existait, seul le cote ECRITURE etait tenu ; ce hook automatise la LECTURE. Bloc d etat seul, plafonne a 8000 car : injecter les 80 Ko du journal couterait plus cher que le probleme.",
   "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"<HOME>/.claude/hooks/checkpoint_precompact.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "python \"<HOME>/.claude/hooks/inject_lecons.py\"",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python \"<HOME>/.claude/hooks/journal_etat.py\"",
             "timeout": 15
           }
         ]

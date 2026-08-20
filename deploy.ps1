@@ -84,7 +84,9 @@ $attendus = @(
     @{ event = "PreToolUse";   matcher = "Bash|PowerShell";         hook = "block_git_add_all.py" },
     @{ event = "PreToolUse";   matcher = "Bash|PowerShell";         hook = "block_cloud_cache.py" },
     @{ event = "SessionStart"; matcher = "";                        hook = "inject_lecons.py" },
-    @{ event = "PostToolUse";  matcher = "Bash|PowerShell";         hook = "rappel_lecon.py" }
+    @{ event = "SessionStart"; matcher = "";                        hook = "journal_etat.py" },
+    @{ event = "PostToolUse";  matcher = "Bash|PowerShell";         hook = "rappel_lecon.py" },
+    @{ event = "PreCompact";   matcher = "";                        hook = "checkpoint_precompact.py" }
 )
 foreach ($a in $attendus) {
     $declares = $conf.hooks.($a.event) |
