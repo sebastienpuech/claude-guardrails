@@ -292,8 +292,8 @@ def _verifier_checkpoint():
             json.dumps({"type": "user", "message": {"content": "DEMANDE-DEUX"}}),
         ]), encoding="utf-8")
 
-        sortie = mod._rediger({"session_id": "abcd1234-ef", "transcript_path": str(transcript),
-                               "trigger": "auto", "cwd": str(base)})
+        sortie, _ = mod._rediger({"session_id": "abcd1234-ef", "transcript_path": str(transcript),
+                                  "trigger": "auto", "cwd": str(base)})
         texte = sortie.read_text(encoding="utf-8")
         cas = [
             ("le fichier est ecrit", sortie.is_file()),
@@ -307,9 +307,28 @@ def _verifier_checkpoint():
         ]
 
         # transcript absent : on ecrit quand meme un fichier, on ne plante pas
-        vide = mod._rediger({"session_id": "zz", "transcript_path": str(base / "nexiste.jsonl"),
-                             "trigger": "manual", "cwd": str(base)})
+        vide, _ = mod._rediger({"session_id": "zz", "transcript_path": str(base / "nexiste.jsonl"),
+                                "trigger": "manual", "cwd": str(base)})
         cas.append(("transcript absent : fichier quand meme ecrit", vide.is_file()))
+
+        # Compteur de compactions : silencieux au 1er passage, bruyant au 2e (seuil
+        # d'abandon du CLAUDE.md global). Le rang se deduit des fichiers deja sur
+        # disque ; deux passages dans la meme minute ecrasent le meme fichier, ce qui
+        # est sans importance ici — ce qu'on prouve, c'est que l'alerte sort au 2e.
+        arg = {"session_id": "seance99-xx", "transcript_path": str(transcript),
+               "trigger": "auto", "cwd": str(base)}
+        f1, r1 = mod._rediger(arg)
+        t1 = f1.read_text(encoding='utf-8')
+        f2, r2 = mod._rediger(arg)
+        t2 = f2.read_text(encoding='utf-8')
+        cas += [
+            ("1re compaction de la session : rang 1", r1 == 1),
+            ("1re compaction : aucune alerte", "ALERTE" not in t1),
+            ("2e compaction de la session : rang 2", r2 == 2),
+            ("2e compaction : banniere d'alerte en tete du fichier", "ALERTE" in t2),
+            ("l'alerte dit quoi faire, pas seulement qu'il y a probleme",
+             "Ecrire l'etat" in t2),
+        ]
 
         for note, ok in cas:
             echecs += not ok
@@ -336,6 +355,25 @@ def _verifier_checkpoint():
             ("l'echec est trace dans le faux home (fail-open != silencieux)",
              journal_echec.is_file() and "JSONDecodeError" in journal_echec.read_text(encoding="utf-8")),
             (f"le vrai ECHEC.log n'a pas bouge ({avant} -> {apres} octets)", avant == apres),
+        ]
+        for note, ok in cas:
+            echecs += not ok
+            print(f"{'OK  ' if ok else 'FAIL'}  {note}")
+
+    # Bout en bout : le 2e compactage d'une session crie sur stderr — seul canal d'un
+    # hook PreCompact vers Sebastien (exit 2 n'y parle pas a Claude) — sans bloquer.
+    with tempfile.TemporaryDirectory() as tmp:
+        faux_home = {**os.environ, "USERPROFILE": tmp, "HOME": tmp}
+        charge = json.dumps({"session_id": "boucle01-zz", "transcript_path": "",
+                             "trigger": "auto", "cwd": tmp})
+        runs = [subprocess.run([sys.executable, str(HOOKS / "checkpoint_precompact.py")],
+                               input=charge, capture_output=True, text=True,
+                               env=faux_home) for _ in range(2)]
+        cas = [
+            ("1er compactage : stderr muet", runs[0].stderr.strip() == ""),
+            ("2e compactage : alerte sur stderr", "2e COMPACTAGE" in runs[1].stderr),
+            (f"l'alerte ne bloque pas la compaction (exit={runs[1].returncode})",
+             runs[1].returncode == 0),
         ]
         for note, ok in cas:
             echecs += not ok

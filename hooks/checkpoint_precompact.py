@@ -32,6 +32,19 @@ MAX_MESSAGES = 40        # les 40 dernieres demandes suffisent a rebrancher un f
 MAX_CAR_MESSAGE = 1200   # au-dela, une demande est tronquee (elle reste dans le .jsonl)
 MAX_FICHIERS = 60
 MAX_LIGNES_LUES = 200000  # garde-fou : un transcript peut peser 47 Mo
+SEUIL_ALERTE = 2         # CLAUDE.md global : 2 compactages sans progres ecrit = on arrete
+
+
+def _rang_compaction(session: str) -> int:
+    """Rang de la compaction en cours dans cette session (1 = la premiere).
+
+    Compte les points d'etape deja sur disque pour cette session. Le nom de fichier
+    porte l'id court (AAAA-MM-JJ_HHMM_<session>.md), donc un glob suffit — pas d'etat
+    a maintenir ailleurs, et le compteur survit a un redemarrage du CLI.
+    """
+    if not session or not DOSSIER.is_dir():
+        return 1
+    return len(list(DOSSIER.glob(f"*_{session}.md"))) + 1
 
 
 def _texte_utilisateur(message) -> str | None:
@@ -87,10 +100,11 @@ def _depouiller(chemin: Path):
     return demandes, fichiers, commandes
 
 
-def _rediger(entree: dict) -> Path:
+def _rediger(entree: dict) -> tuple[Path, int]:
     transcript = Path(entree.get("transcript_path") or "")
     session = (entree.get("session_id") or "inconnue")[:8]
     horodatage = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
+    rang = _rang_compaction(session)
     DOSSIER.mkdir(parents=True, exist_ok=True)
     sortie = DOSSIER / f"{horodatage}_{session}.md"
 
@@ -98,10 +112,23 @@ def _rediger(entree: dict) -> Path:
     if transcript.is_file():
         demandes, fichiers, commandes = _depouiller(transcript)
 
-    lignes = [
+    lignes = []
+    if rang >= SEUIL_ALERTE:
+        lignes += [
+            f"> **ALERTE — {rang}e compaction de cette session.**",
+            ">",
+            "> Seuil d'abandon du CLAUDE.md global : 2 compactages sans progres ecrit =",
+            "> on arrete. Compacter ne rend pas la fenetre (~69 k de marge reelle, pas 120 k),",
+            "> donc une 3e relance est perdante. Ecrire l'etat, fermer, repartir en session",
+            "> neuve avec un perimetre decoupe plus fin. Si une commande rend plus de",
+            "> ~50 lignes, c'est elle la cause — la deleguer a un sous-agent.",
+            "",
+        ]
+    lignes += [
         f"# Point d'etape avant compaction — {horodatage}",
         "",
         f"- Session : `{entree.get('session_id', '?')}`",
+        f"- Compaction n° {rang} de cette session",
         f"- Declencheur : {entree.get('trigger', '?')} (auto = seuil de contexte, manual = /compact)",
         f"- Dossier de travail : `{entree.get('cwd', '?')}`",
         f"- Transcript complet : `{transcript}`",
@@ -125,14 +152,23 @@ def _rediger(entree: dict) -> Path:
     lignes += ["```", ""]
 
     sortie.write_text("\n".join(lignes), encoding="utf-8")
-    return sortie
+    return sortie, rang
 
 
 def main() -> int:
     try:
         entree = json.load(sys.stdin)
-        sortie = _rediger(entree)
-        print(f"Point d'etape ecrit : {sortie}")
+        sortie, rang = _rediger(entree)
+        print(f"Point d'etape ecrit : {sortie} (compaction n° {rang})")
+        if rang >= SEUIL_ALERTE:
+            alerte = [
+                f"!! {rang}e COMPACTAGE DE CETTE SESSION !!",
+                "Seuil d'abandon atteint (CLAUDE.md global). Compacter ne rend pas la",
+                "fenetre : une 3e relance est perdante. Ecris l'etat, ferme, repars en",
+                "session neuve avec un perimetre plus fin. Cause probable : une",
+                "commande qui rend plus de ~50 lignes.",
+            ]
+            print(chr(10).join(alerte), file=sys.stderr)
     except Exception as exc:  # fail-open assume : ne jamais bloquer une compaction
         try:
             DOSSIER.mkdir(parents=True, exist_ok=True)
