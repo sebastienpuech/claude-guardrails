@@ -7,6 +7,7 @@ chaque echec reel devient un test, jamais une regle isolee de plus).
 Lancer :  python tests/test_hooks.py     (exit 0 = vert, 1 = rouge)
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -314,12 +315,31 @@ def _verifier_checkpoint():
             echecs += not ok
             print(f"{'OK  ' if ok else 'FAIL'}  {note}")
 
-    # fail-open bout en bout : JSON illisible sur stdin => exit 0, la compaction passe
-    p = subprocess.run([sys.executable, str(HOOKS / "checkpoint_precompact.py")],
-                       input="{pas du json", capture_output=True, text=True)
-    ok = p.returncode == 0
-    echecs += not ok
-    print(f"{'OK  ' if ok else 'FAIL'}  fail-open : JSON illisible ne bloque pas la compaction (exit={p.returncode})")
+    # fail-open bout en bout : JSON illisible sur stdin => exit 0, la compaction passe.
+    # Le hook calcule DOSSIER depuis Path.home() ; en sous-processus on ne peut pas le
+    # monkeypatcher, alors on lui ment sur son dossier maison (USERPROFILE sous Windows,
+    # HOME ailleurs). Sans ca le test ecrivait son propre echec dans le VRAI
+    # ~/.claude/checkpoints/ECHEC.log — 12 lignes de bruit constatees le 20/08, qui
+    # rendaient illisible le seul canal d'alerte du hook.
+    vrai_journal = Path.home() / ".claude" / "checkpoints" / "ECHEC.log"
+    avant = vrai_journal.stat().st_size if vrai_journal.is_file() else -1
+    with tempfile.TemporaryDirectory() as tmp:
+        faux_home = {**os.environ, "USERPROFILE": tmp, "HOME": tmp}
+        p = subprocess.run([sys.executable, str(HOOKS / "checkpoint_precompact.py")],
+                           input="{pas du json", capture_output=True, text=True,
+                           env=faux_home)
+        journal_echec = Path(tmp) / ".claude" / "checkpoints" / "ECHEC.log"
+        apres = vrai_journal.stat().st_size if vrai_journal.is_file() else -1
+        cas = [
+            (f"fail-open : JSON illisible ne bloque pas la compaction (exit={p.returncode})",
+             p.returncode == 0),
+            ("l'echec est trace dans le faux home (fail-open != silencieux)",
+             journal_echec.is_file() and "JSONDecodeError" in journal_echec.read_text(encoding="utf-8")),
+            (f"le vrai ECHEC.log n'a pas bouge ({avant} -> {apres} octets)", avant == apres),
+        ]
+        for note, ok in cas:
+            echecs += not ok
+            print(f"{'OK  ' if ok else 'FAIL'}  {note}")
     return echecs
 
 
