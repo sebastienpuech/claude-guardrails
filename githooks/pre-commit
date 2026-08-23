@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Shim central appele pour TOUS les repos via `git config --global core.hooksPath`.
+# 1) garde-fou de taille (refuse le commit anormalement gros)
+# 2) enchaine sur le hook local du repo s'il existe (core.hooksPath le masquerait sinon)
+python "$HOME/.claude/hooks/pre_commit_taille.py" || exit 1
+
+local_hook="$(git rev-parse --git-dir)/hooks/pre-commit"
+if [ -x "$local_hook" ]; then exec "$local_hook" "$@"; fi
+exit 0
