@@ -151,8 +151,11 @@ rendre compte » + 6 règles de forme pour les questions restantes + A3 (git pro
 déterministe (2 811 sessions scannées), classification par workflow 12 agents,
 contre-épreuve adversariale à 3 lentilles (réfutation empirique, périmètre/sécurité,
 complétude) sur les 45 divergences réelles. Rapport rangé dans
-`audit/rapport-audit-questions-45j.md`, titre corrigé (fenêtre réelle ≈ 06/07 → 20/08/2026,
-pas « 25/06 → 09/08 »).
+`audit/rapport-audit-questions-45j.md`. Errata même jour : le titre avait d'abord été
+« corrigé » à tort (fenêtre supposée close au 20/08, déduite de la date de dépôt du fichier
+dans le repo) — la mémoire de session horodatée 09/08 17:05 prouve que l'audit a tourné le
+09/08 ; fenêtre d'origine 25/06 → 09/08 rétablie. Dérogation déclarée à l'append-only du
+journal : correction dans l'entrée du jour même, avant clôture du chantier.
 
 **Les chiffres qui justifient.** 538 questions uniques en 45 j (~12/jour, dédupliquées —
 la contre-épreuve avait détecté des sessions journalisées en double). 76 % de suivi quand
