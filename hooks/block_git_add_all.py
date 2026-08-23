@@ -3,6 +3,17 @@
 Regle : CLAUDE.md global, section Git — « `git add` scope au chantier, jamais `-A` ni `.` ».
 Incident a l'origine : 4 545 lignes de suppression avalees par le commit d'une autre session.
 
+v3 (2026-08-21) — test adversarial : 10 trous sur 12 cas. `.split()` coupait aux espaces
+sans deguillemeter : le token gardait ses guillemets, ne commencait donc pas par `-`,
+et passait. `shlex.split()` decoupe comme le shell le ferait. Ferme les formes citees
+entre guillemets, apostrophes, echappees par antislash, et la variante PowerShell.
+Effet de bord : supprime aussi un faux positif (un nom de fichier contenant un tiret
+suivi de A etait lu comme l'option courte).
+Les 6 autres trous (alias, variable shell, xargs, substitution de commande, script .sh)
+sont NON colmatables ici : la commande ne contient jamais les deux mots cote a cote.
+Ils sont couverts un etage plus bas, par le garde-fou `pre-commit`
+(~/.claude/githooks/pre-commit), qui lit l'etat reel du staging au lieu du texte.
+
 v2 (2026-07-27) — durci apres test de contournement (5 trous sur 13 cas) :
   - `--al`, `--upd`… : git accepte les abreviations non ambigues d'options longues
     (verifie en live : `git add --al` stage bien tout le repo).
@@ -18,6 +29,7 @@ Exit 2 = blocage, message stderr renvoye au modele.
 """
 import json
 import re
+import shlex
 import sys
 
 # Formes de pathspec qui designent « tout » plutot qu'un fichier precis.
@@ -59,7 +71,11 @@ def raison_de_bloquer(cmd: str) -> str | None:
     """Retourne la raison du blocage, ou None si la commande est scopee."""
     cmd = _MESSAGE.sub(" ", cmd)  # le texte d'un message n'est pas une commande
     for match in _MOTIF.finditer(cmd):
-        for arg in match.group(1).split():
+        try:
+            args = shlex.split(match.group(1), posix=True)
+        except ValueError:  # guillemet non ferme : fail-closed
+            return "commande non analysable (guillemet non ferme)"
+        for arg in args:
             if _est_long_interdit(arg):
                 return f"option `{arg}` (prefixe de --all/--update : git accepte les abreviations)"
             if _est_court_interdit(arg):
