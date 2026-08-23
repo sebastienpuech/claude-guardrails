@@ -500,6 +500,85 @@ def _verifier_journal_etat():
     return echecs
 
 
+def _verifier_alerte_contexte():
+    """alerte_contexte.py : il jauge, il ne compacte pas, et il ne bloque JAMAIS.
+
+    Il remplace CLAUDE_CODE_AUTO_COMPACT_WINDOW, retiree le 20/08/2026 apres la boucle
+    de compactage (167 compactages en 36 h, dont 27 dans une seule session). Elle
+    forcait un compactage a 120k, a peine au-dessus du plancher de contexte (~69k).
+    La lecon : alerter, laisser la decision humaine. Invariant le plus important ici —
+    une alerte qui dit « le contexte est plein » ne doit rien ajouter au contexte.
+    """
+    import tempfile
+    print("\n--- alerte_contexte.py (jauge de contexte) ---")
+    mod = _charger("alerte_contexte.py")
+    echecs = 0
+
+    def _usage(lu, cree, neufs=10):
+        return json.dumps({"type": "assistant", "message": {"usage": {
+            "input_tokens": neufs, "cache_read_input_tokens": lu,
+            "cache_creation_input_tokens": cree}}})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        mod.DOSSIER = base / "alertes"
+        transcript = base / "t.jsonl"
+        transcript.write_text("\n".join([
+            _usage(1_000, 0),
+            "{ligne corrompue au milieu",
+            json.dumps({"type": "user", "message": {"content": "ligne sans usage"}}),
+            _usage(400_000, 100_000),
+        ]), encoding="utf-8")
+        total = mod._total_contexte(transcript)
+        cas = [
+            ("somme lu+cree+neufs, pas seulement les tokens neufs", total == 500_010),
+            ("c'est la DERNIERE requete qui compte, pas la premiere", total > 1_000),
+            ("ligne corrompue au milieu : ignoree, pas d'exception", total > 0),
+            ("500k -> palier 3 avec un seuil de 150k", total // 150_000 == 3),
+            ("premier franchissement -> alerte", not mod._palier_deja_signale("s1", 3)),
+            ("meme palier -> silence (pas de harcelement)", mod._palier_deja_signale("s1", 3)),
+            ("palier suivant -> alerte a nouveau", not mod._palier_deja_signale("s1", 4)),
+        ]
+        for titre, ok in cas:
+            echecs += not ok
+            print(f"{'OK  ' if ok else 'FAIL'}  {titre}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        env = {**os.environ, "CLAUDE_ALERTE_CONTEXTE_DOSSIER": str(base / "etat")}
+        transcript = base / "t.jsonl"
+        transcript.write_text(_usage(900_000, 0), encoding="utf-8")
+
+        def _run(charge):
+            return subprocess.run(
+                [sys.executable, str(HOOKS / "alerte_contexte.py")],
+                input=charge, capture_output=True, text=True, env=env)
+
+        p1 = _run(json.dumps({"session_id": "golden", "transcript_path": str(transcript)}))
+        try:
+            sortie = json.loads(p1.stdout)
+        except Exception:
+            sortie = {}
+        p2 = _run("{pas du json")
+        petit = base / "petit.jsonl"
+        petit.write_text(_usage(1_000, 0), encoding="utf-8")
+        p3 = _run(json.dumps({"session_id": "golden-bas", "transcript_path": str(petit)}))
+        casb = [
+            ("exit 0 : ne bloque jamais une demande", p1.returncode == 0),
+            ("systemMessage emis au franchissement", "systemMessage" in sortie),
+            ("suppressOutput : rien n'entre dans le contexte", sortie.get("suppressOutput") is True),
+            ("aucune injection via hookSpecificOutput", "hookSpecificOutput" not in sortie),
+            ("le total est chiffre dans le message", "900k" in sortie.get("systemMessage", "")),
+            ("stdin illisible -> fail-open, exit 0", p2.returncode == 0),
+            ("stdin illisible -> stdout muet", p2.stdout.strip() == ""),
+            ("sous le seuil -> silence total", p3.returncode == 0 and p3.stdout.strip() == ""),
+        ]
+        for titre, ok in casb:
+            echecs += not ok
+            print(f"{'OK  ' if ok else 'FAIL'}  {titre}")
+    return echecs
+
+
 if __name__ == "__main__":
     total = (
         _verifier("block_git_add_all.py", "block_git_add_all.py", CAS_GIT, "command")
@@ -511,6 +590,7 @@ if __name__ == "__main__":
         + _verifier_fail_open()
         + _verifier_checkpoint()
         + _verifier_journal_etat()
+        + _verifier_alerte_contexte()
     )
     print(f"\n{'VERT' if total == 0 else 'ROUGE'} — {total} echec(s)")
     sys.exit(1 if total else 0)
