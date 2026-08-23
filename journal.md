@@ -14,6 +14,15 @@
 
 ## État actuel (glissant)
 
+- **Section « Autonomie » dans `CLAUDE-global.md`, déployée le 23/08.** 14 règles tirées de
+  l'audit questions (538 questions/45 j, ~48 % prédictibles ; rapport :
+  `audit/rapport-audit-questions-45j.md`), chacune contre-éprouvée par 3 agents adversariaux
+  sur les 45 divergences réelles. A3 (git protecteur sans demander) est écrite mais
+  **NON ACTIVE** : elle attend un oui dédié + un script de scan confidentialité.
+  Déploiement du 23/08 par copie ciblée du seul CLAUDE.md (hash vérifié) — `deploy.ps1`
+  complet volontairement non lancé : il aurait embarqué `hooks/alerte_contexte.py`, WIP
+  non commité d'une autre session.
+
 - **Couche globale déployée et conforme.** Source de vérité = ce repo. Cycle inchangé :
   éditer ici → `python tests/test_hooks.py` (VERT obligatoire) → `.\deploy.ps1`.
   `deploy.ps1` n'écrit **jamais** `settings.json`, il vérifie contre la liste `$attendus`
@@ -133,3 +142,37 @@ hook a été aligné sur la convention réelle plutôt que d'en créer une deuxi
 repo-ci a été amorcé.
 
 **Pas déployé.** `deploy.ps1` touche `~/.claude/` (du vivant) : attend un « oui ».
+
+### 2026-08-23 — la couche globale apprend l'autonomie
+
+**Fait.** Section « Autonomie » ajoutée à `CLAUDE-global.md` : 8 règles « décider seul et
+rendre compte » + 6 règles de forme pour les questions restantes + A3 (git protecteur)
+écrite NON ACTIVE. Source : audit des transcripts sur 45 jours — extraction par script
+déterministe (2 811 sessions scannées), classification par workflow 12 agents,
+contre-épreuve adversariale à 3 lentilles (réfutation empirique, périmètre/sécurité,
+complétude) sur les 45 divergences réelles. Rapport rangé dans
+`audit/rapport-audit-questions-45j.md`, titre corrigé (fenêtre réelle ≈ 06/07 → 20/08/2026,
+pas « 25/06 → 09/08 »).
+
+**Les chiffres qui justifient.** 538 questions uniques en 45 j (~12/jour, dédupliquées —
+la contre-épreuve avait détecté des sessions journalisées en double). 76 % de suivi quand
+une reco était affichée, quasi 100 % sur « reco argumentée + geste réversible ».
+102 questions ont bloqué > 30 min, 56 > 4 h — souvent des nuits pour un « go ».
+
+**Ce que la contre-épreuve a changé.** 9 règles sur 12 durcies sur contre-exemples réels
+avant intégration : « réversible via git » est faux pour le travail non commité (un
+nettoyage « sûr » aurait détruit 131 fichiers non commités) ; les fichiers de harnais
+(CLAUDE.md, settings, hooks, mémoire) ne comptent jamais comme réversibles ; le biais de
+Sébastien est à deux bords — option maximale sur la conception interne, minimale dès qu'il
+y a exposition ou risque. 2 règles ajoutées par la lentille complétude (incident → purger
+la file ; ne jamais lui déléguer une commande exécutable par Claude).
+
+**Vérifié, pas supposé.** Golden `tests/test_hooks.py` : VERT, 0 échec. Gate de clôture
+unique avec périmètre listé (application immédiate de la règle F3 fraîchement écrite) :
+réponse « Commit + push + déployer ». Déploiement par copie ciblée du CLAUDE.md, hash
+source/déployé identiques — dérogation déclarée au cycle `deploy.ps1` : le script copie
+tous les `hooks/*.py` et aurait embarqué `alerte_contexte.py`, WIP non commité d'une autre
+session. `git add` scopé aux 3 fichiers du chantier, ce WIP n'entre pas dans le commit.
+Au passage, le hook `block_git_add_all.py` a bloqué (fail-closed) un here-string PowerShell
+qu'il ne savait pas parser — faux positif assumé, contourné par édition de fichier directe,
+pas en désactivant le hook.
