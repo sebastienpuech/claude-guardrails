@@ -14,6 +14,23 @@
 
 ## État actuel (glissant)
 
+- **Compactage : la variable est morte, le hook prend le relais (23/08).**
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` a vécu 36 h (posée 19/08 13:01, retirée 20/08 21:15) et
+  produit 167 compactages en deux jours. Depuis, plus **aucun** compactage automatique :
+  63 le 19/08, 104 le 20/08, 0 les 21 et 22, et le seul du 23/08 est un `/compact` manuel.
+  Le seuil par défaut, mesuré sur les transcripts, se situe **entre 922k et 998k** — hors
+  d'atteinte des sessions réelles (max 548k). `alerte_contexte.py` prévient à chaque palier
+  de 150k. **Ne pas remettre la variable**, ni son équivalent natif `autoCompactWindow`.
+
+- **`deploy.ps1` a été lancé en entier le 23/08** — la réserve notée plus bas (« complet
+  volontairement non lancé ») est levée : `alerte_contexte.py` est commité et déployé,
+  `$attendus` couvre les 8 hooks, sortie « Conforme ».
+
+- **Garde-fous git désormais versionnés.** `hooks/pre_commit_taille.py` et `githooks/`
+  (shims `core.hooksPath`) vivaient depuis le 21/08 uniquement dans `~/.claude/`.
+  `.gitattributes` force le LF sur les shims : en CRLF, leur shebang casse en silence.
+  **`deploy.ps1` ne synchronise pas `githooks/`** — seul écart source/déployé connu.
+
 - **Section « Autonomie » dans `CLAUDE-global.md`, déployée le 23/08.** 14 règles tirées de
   l'audit questions (538 questions/45 j, ~48 % prédictibles ; rapport :
   `audit/rapport-audit-questions-45j.md`), chacune contre-éprouvée par 3 agents adversariaux
@@ -28,9 +45,9 @@
   `deploy.ps1` n'écrit **jamais** `settings.json`, il vérifie contre la liste `$attendus`
   (exit 0 = conforme, exit 2 = dérive). Ne jamais éditer `~/.claude/` comme une source.
 
-- **Hooks en place (6).** `block_git_add_all.py` et `block_cloud_cache.py` sont
+- **Hooks en place (8).** `block_git_add_all.py` et `block_cloud_cache.py` sont
   *fail-closed* (ils gardent). `inject_lecons.py`, `rappel_lecon.py`,
-  `checkpoint_precompact.py` et `journal_etat.py` sont *fail-open* — dérogation déclarée au
+  `checkpoint_precompact.py`, `journal_etat.py` et `alerte_contexte.py` sont *fail-open* — dérogation déclarée au
   principe 1 de `doctrine.md`, motif écrit dans chaque docstring : un informatif cassé qui
   empêcherait une session de démarrer ou une compaction d'aboutir serait pire que le mal.
 
@@ -179,3 +196,37 @@ session. `git add` scopé aux 3 fichiers du chantier, ce WIP n'entre pas dans le
 Au passage, le hook `block_git_add_all.py` a bloqué (fail-closed) un here-string PowerShell
 qu'il ne savait pas parser — faux positif assumé, contourné par édition de fichier directe,
 pas en désactivant le hook.
+
+### 2026-08-23 — le compactage n'était pas cassé, et un déploiement a mangé 2,6 ko
+
+Question de départ : « le compactage automatique a cassé ? » Non — **retiré volontairement**
+le 20/08 à 21:15. La preuve tenait dans un fichier nommé
+`settings.json.bak-2026-08-20-avant-fix-compaction` dont le seul écart avec les réglages
+actifs était la ligne `CLAUDE_CODE_AUTO_COMPACT_WINDOW`. Mesure des compactages réels :
+63 / 104 / 0 / 0 / 1. Le fix a marché.
+
+Découverte au passage : le paragraphe du `CLAUDE-global.md` qui décrivait la variable comme
+active a été commité (`467a6e7`, 21:25) **10 minutes après** le correctif qui la retirait
+(21:15). Il n'est pas devenu faux, il est **né faux** — la session qui corrige un incident
+écrit la leçon dans la foulée et décrit l'état d'avant son propre correctif. Réécrit.
+
+Livré : `alerte_contexte.py` (UserPromptSubmit). Il **alerte et ne compacte pas** — forcer un
+compactage est précisément ce qui a créé la boucle. Invariant testé en priorité : une alerte
+qui annonce un contexte plein ne doit rien ajouter au contexte (`systemMessage` +
+`suppressOutput`, zéro `additionalContext`). 15 assertions au golden, `$attendus` étendu.
+
+**Incident, causé ici :** `deploy.ps1` a restauré `block_cloud_cache.py` et
+`block_git_add_all.py` dans leur version du 27/07, effaçant ~2,6 ko de durcissements du
+21/08. Le script a fait son métier — ce travail n'avait jamais quitté `~/.claude/hooks/`.
+Récupéré depuis le transcript de la session d'origine (`7bc7c819`, 15:32-15:36), rejoué
+**dans le repo**, vérifié à l'octet près (4353 / 5354). Contenu réel : un faux positif où
+`2>/dev/null` comptait comme verbe d'écriture, et `shlex.split()` fermant 10 trous sur 12.
+
+Deux traces à garder :
+- le hook restauré **a bloqué mon propre message de commit**, qui citait littéralement
+  l'option interdite entre guillemets. Faux positif de prose — le garde-fou n'est pas
+  décoratif, et sa limite (il lit du texte) est exactement celle que `pre_commit_taille.py`
+  couvre un étage plus bas.
+- un `git reset` avalé par une commande bloquée a fait gonfler un commit de 2 à 6 fichiers.
+  Rattrapé avant push (`reset --soft`). Une commande bloquée n'exécute **rien**, pas même
+  ce qui précède le `&&`.
