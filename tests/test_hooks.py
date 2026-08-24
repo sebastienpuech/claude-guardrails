@@ -579,6 +579,118 @@ def _verifier_alerte_contexte():
     return echecs
 
 
+def _verifier_gate_modele():
+    """gate_modele.py : il conseille par injection, il ne bloque ni ne classe.
+
+    Invariants, tous nes d'un echec reel du 24/08/2026 :
+    (a) sa sortie ENTRE dans le contexte du modele, donc texte brut -- du JSON serait
+        interprete par Claude Code comme une decision structuree ;
+    (b) tout echec laisse stdout MUET : une consigne a moitie ecrite qui entre dans le
+        contexte est pire que pas de hook ;
+    (c) la TRACE ne doit jamais empecher l'INJECTION. Premiere version : _tracer() etait
+        appele avant l'ecriture, un dossier de trace non creable a supprime la consigne
+        entiere. Le produit passe d'abord, le confort ensuite ;
+    (d) l'effort se lit dans le transcript (champ `effort`, ecrit par Claude Code lui-meme),
+        pas dans CLAUDE_EFFORT dont l'heritage n'etait pas garanti.
+    """
+    import tempfile
+    print("\n--- gate_modele.py (conseil modele/effort) ---")
+    echecs = 0
+
+    def _tour(modele, effort=None):
+        o = {"type": "assistant", "message": {"model": modele}}
+        if effort:
+            o["effort"] = effort
+        return json.dumps(o)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        transcript = base / "t.jsonl"
+        transcript.write_text("\n".join([
+            _tour("claude-opus-5", "medium"),
+            "{ligne corrompue au milieu",
+            json.dumps({"type": "user", "message": {"content": "pas de modele ici"}}),
+            _tour("claude-fable-5", "high"),
+        ]), encoding="utf-8")
+        sans_effort = base / "sans_effort.jsonl"
+        sans_effort.write_text(_tour("claude-opus-5"), encoding="utf-8")
+        vide = base / "vide.jsonl"
+        vide.write_text("", encoding="utf-8")
+
+        # DOSSIER impossible a creer : un fichier ordinaire sert de parent
+        obstacle = base / "obstacle"
+        obstacle.write_text("je ne suis pas un dossier", encoding="utf-8")
+
+        env = {**os.environ, "CLAUDE_GATE_MODELE_DOSSIER": str(base / "etat"),
+               "CLAUDE_EFFORT": "xhigh"}
+        env.pop("CLAUDE_GATE_MODELE", None)
+
+        def _run(charge, e=None):
+            return subprocess.run(
+                [sys.executable, str(HOOKS / "gate_modele.py")],
+                input=charge, capture_output=True, text=True, env=e or env)
+
+        def _charge(sid, chemin):
+            return json.dumps({"session_id": sid, "transcript_path": str(chemin)})
+
+        p1 = _run(_charge("g1", transcript))
+        p2 = _run(_charge("g2", vide))
+        p3 = _run(_charge("g3", transcript), {**env, "CLAUDE_GATE_MODELE": "off"})
+        p4 = _run("ceci n'est pas du json")
+        p5 = _run(_charge("g5", sans_effort),
+                  {k: v for k, v in env.items() if k != "CLAUDE_EFFORT"})
+        p6 = _run(_charge("g6", sans_effort))
+        p7 = _run(_charge("g7", transcript),
+                  {**env, "CLAUDE_GATE_MODELE_DOSSIER": str(obstacle / "sous")})
+
+        def _est_json(texte):
+            try:
+                json.loads(texte)
+                return True
+            except Exception:
+                return False
+
+        trace = base / "etat" / "g1.txt"
+        cas = [
+            ("exit 0 : ne bloque jamais une demande", p1.returncode == 0),
+            ("c'est le DERNIER modele du transcript qui compte",
+             "claude-fable-5" in p1.stdout),
+            ("ligne corrompue au milieu : ignoree, pas d'exception",
+             p1.returncode == 0 and p1.stdout.strip() != ""),
+            ("l'effort vient du transcript, pas de l'environnement",
+             "effort=high]" in p1.stdout),
+            ("le marqueur de mesure est present et greppable",
+             "[[MODELE]]" in p1.stdout),
+            ("le bareme cite les quatre paliers",
+             all(m in p1.stdout for m in
+                 ("claude-sonnet-5", "claude-opus-5", "claude-fable-5", "max"))),
+            ("sortie en texte brut, JAMAIS du JSON (sinon lu comme une decision)",
+             not _est_json(p1.stdout.strip())),
+            ("transcript vide -> repli sur le defaut de settings.json",
+             p2.returncode == 0 and p2.stdout.strip() != ""),
+            ("le repli s'annonce comme non confirme, il n'invente rien",
+             "?" in p2.stdout or "pas encore confirme" in p2.stdout),
+            ("interrupteur off -> silence total",
+             p3.returncode == 0 and p3.stdout.strip() == ""),
+            ("stdin illisible -> fail-open, exit 0", p4.returncode == 0),
+            ("stdin illisible -> stdout MUET (rien n'entre dans le contexte)",
+             p4.stdout.strip() == ""),
+            ("transcript sans effort ET env absent -> le dit, ne l'invente pas",
+             "effort=inconnu]" in p5.stdout),
+            ("transcript sans effort -> repli sur l'environnement",
+             "effort=xhigh]" in p6.stdout),
+            ("TROU 24/08 : trace impossible -> la consigne est emise quand meme",
+             p7.stdout.strip() != "" and "claude-fable-5" in p7.stdout),
+            ("TROU 24/08 : trace impossible -> exit 0 malgre tout", p7.returncode == 0),
+            ("trace ecrite une fois par session (mesure a posteriori)",
+             trace.exists() and "effort=high" in trace.read_text(encoding="utf-8")),
+        ]
+        for titre, ok in cas:
+            echecs += not ok
+            print(f"{'OK  ' if ok else 'FAIL'}  {titre}")
+    return echecs
+
+
 if __name__ == "__main__":
     total = (
         _verifier("block_git_add_all.py", "block_git_add_all.py", CAS_GIT, "command")
@@ -591,6 +703,7 @@ if __name__ == "__main__":
         + _verifier_checkpoint()
         + _verifier_journal_etat()
         + _verifier_alerte_contexte()
+        + _verifier_gate_modele()
     )
     print(f"\n{'VERT' if total == 0 else 'ROUGE'} — {total} echec(s)")
     sys.exit(1 if total else 0)

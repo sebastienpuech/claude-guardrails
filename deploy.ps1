@@ -87,7 +87,8 @@ $attendus = @(
     @{ event = "SessionStart"; matcher = "";                        hook = "journal_etat.py" },
     @{ event = "PostToolUse";  matcher = "Bash|PowerShell";         hook = "rappel_lecon.py" },
     @{ event = "PreCompact";   matcher = "";                        hook = "checkpoint_precompact.py" },
-    @{ event = "UserPromptSubmit"; matcher = "";                    hook = "alerte_contexte.py" }
+    @{ event = "UserPromptSubmit"; matcher = "";                    hook = "alerte_contexte.py" },
+    @{ event = "UserPromptSubmit"; matcher = "";                    hook = "gate_modele.py" }
 )
 foreach ($a in $attendus) {
     $declares = $conf.hooks.($a.event) |

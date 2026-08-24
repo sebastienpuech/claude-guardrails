@@ -87,6 +87,11 @@
             "type": "command",
             "command": "python \"<HOME>/.claude/hooks/alerte_contexte.py\"",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python \"<HOME>/.claude/hooks/gate_modele.py\"",
+            "timeout": 15
           }
         ]
       }
