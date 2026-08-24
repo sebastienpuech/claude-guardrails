@@ -77,6 +77,16 @@
   « `/compact` avant la pause » et « ce qui compte s'écrit dans un fichier, pas dans le
   contexte ».
 
+- **`gate_modele.py` en service depuis le 24/08.** Hook `UserPromptSubmit` : il n'analyse
+  rien et ne bloque rien. Il injecte une consigne (~100 tokens) qui force le modèle déjà
+  chargé à juger l'ampleur réelle du travail avant de s'y mettre, et à s'arrêter en
+  annonçant `[[MODELE]] <modèle> + <effort>` si le réglage courant ne convient pas.
+  Interrupteur : `CLAUDE_GATE_MODELE=off`. **Fait mesuré, documenté nulle part ailleurs :
+  `CLAUDE_EFFORT` n'est PAS hérité par un hook lancé par Claude Code.** Le transcript porte
+  `message.model` et `effort` sur la même ligne — c'est là qu'il faut lire, pas dans
+  l'environnement. **Seuil d'abandon écrit d'avance : si le marqueur `[[MODELE]]`
+  n'apparaît dans aucun transcript d'ici au 07/09, le hook ne sert à rien et on le retire.**
+
 - **Re-mesure prévue vers le 2026-09-02** : `python audit/audit_usage.py 14`, pour voir si
   le checkpoint + le journal ont fait baisser la part de réchauffage (88 % du `cache_write`
   des grosses sessions au 19/08, ≈ 24 % de la facture 60 jours).
@@ -230,3 +240,43 @@ Deux traces à garder :
 - un `git reset` avalé par une commande bloquée a fait gonfler un commit de 2 à 6 fichiers.
   Rattrapé avant push (`reset --soft`). Une commande bloquée n'exécute **rien**, pas même
   ce qui précède le `&&`.
+
+### 2026-08-24 — choisir le modèle : trois designs morts avant le bon
+
+Point de départ : « on pourrait faire un truc qui me recommande d'abord le modèle et
+l'effort ? ». L'enjeu réel, précisé en cours de route, est le **coût** : ni surévaluer
+(Fable 5 coûte ×2 Opus 5) ni sous-évaluer (un chantier à refaire coûte 100 %).
+
+Trois designs essayés puis abandonnés, chacun tué par un fait vérifié, pas par une préférence :
+
+- **classifieur par mots-clés** — tué par « démontre que tout groupe d'ordre p² est
+  abélien » : quatre mots, zéro fichier, et il faut Fable 5. Un lexique de preuve rattrape
+  ce cas-là, mais pas « c'est quoi un groupe abélien ? », qui porte les mêmes mots pour une
+  réponse d'une phrase. **Le lexique dit le domaine, jamais la profondeur dedans.** Et il ne
+  voit rien de « on refait le moteur méta » : six mots, trois semaines de travail.
+- **appel LLM dédié avant chaque prompt** — tué par l'infra : pas de clé API sur cette
+  machine, tout passe par le forfait Max via l'Agent SDK, qui relance le CLI `claude`
+  (spawns jusqu'à 180 s documentés dans `un-autre-projet/agents/llm_client.py`).
+- **blocage `exit 2`** — tué par la doc officielle : un `UserPromptSubmit` qui bloque
+  **efface le prompt tapé**. Rattrapable via le presse-papier, devenu inutile ensuite.
+
+Retenu : le hook n'évalue rien. Il injecte une consigne, et c'est le modèle **déjà chargé**
+qui juge — lui seul sait ce que désigne « le moteur méta ». Zéro processus, zéro latence.
+Contrepartie assumée : il conseille et s'arrête, il n'empêche pas.
+
+**La leçon transposable** : la profondeur d'un travail n'est pas une propriété du texte du
+prompt. C'est une propriété du travail, que le texte ne fait que désigner. Aucune analyse
+du texte n'y accède — seul quelque chose qui connaît le référent peut trancher.
+
+Deux défauts trouvés en test, devenus cas permanents (17 cas sur ce hook, suite verte) :
+
+- `_tracer()` était appelé **avant** l'injection : un dossier de trace non créable
+  supprimait la consigne entière. Le produit passe d'abord, le confort ensuite.
+- `CLAUDE_EFFORT` n'est pas hérité par un hook — mesuré sur 4 sessions réelles, toutes
+  `effort=inconnu`. Corrigé par la lecture du transcript, vérifié variable retirée de
+  l'environnement.
+
+Deux affirmations de Claude, fausses, corrigées par les faits en séance : « aucun mot-clé ne
+sépare le théorème d'une question anodine » (faux — le lexique de preuve le fait, la vraie
+limite est ailleurs) et « les hooks sont chargés au démarrage, cette session ne le verra
+pas » (faux — il a tiré au prompt suivant, sans redémarrage).
