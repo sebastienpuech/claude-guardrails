@@ -1,8 +1,7 @@
 {
   "_commentaire": "Fragment de reference \u2014 a fusionner dans ~/.claude/settings.json. deploy.ps1 VERIFIE la presence de ces entrees, il ne reecrit jamais settings.json (config utilisateur : on ne patche pas du JSON a l'aveugle).",
-  "_commentaire_env": "Audit forfait 2026-08-19 : 91 % de la conso = contexte (sessions > 200k, rechauffages cache). AUTO_COMPACT_WINDOW=120000 => compaction auto vers ~100k ; SUBAGENT_MODEL=sonnet => sous-agents sur Sonnet 5 sauf 'model:' dans .claude/agents/*.md. Verifier en session : /autocompact.",
+  "_commentaire_env": "SUBAGENT_MODEL=sonnet => sous-agents sur Sonnet 5 sauf 'model:' dans .claude/agents/*.md. NE PAS REMETTRE CLAUDE_CODE_AUTO_COMPACT_WINDOW (retiree du fragment le 2026-08-24) : posee a 120000 le 2026-08-19, RETIREE des le 2026-08-20 a 21:15 apres 167 compactions en 36 h, dont 27 dans une seule session, une toutes les 3-4 min de 14:29 a 21:20. Cause : le plancher de contexte (instructions systeme, CLAUDE.md, schemas d'outils, bloc journal injecte, resume lui-meme) SURVIT a la compaction et repasse au-dessus d'un seuil bas en deux commandes -> boucle. Le seuil par defaut, mesure entre 922k et 998k sur les transcripts reels, ne se declenche jamais seul avant. C'est alerte_contexte.py (UserPromptSubmit) qui previent au franchissement de 150k : il alerte, il ne compacte pas, la decision reste humaine. Le fragment portait encore la variable alors que le settings.json vivant l'avait perdue depuis le 20/08 : piege arme, desamorce ici.",
   "env": {
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "120000",
     "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"
   },
   "permissions": {
