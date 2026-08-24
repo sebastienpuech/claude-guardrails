@@ -32,6 +32,14 @@ selecteur de Claude Code, qui pose max ET allume l'orchestration multi-agents en
 seul geste ; elle est proposee sur Fable comme sur Opus. On ne peut donc pas cumuler
 « max » et « ultracode » : ce sont deux crans du meme curseur.
 
+Deuxieme limite, structurelle : la lecture du reglage a TOUJOURS un tour de retard. Ce
+hook s'execute avant que la reponse du tour courant soit ecrite dans le transcript, et
+l'effort courant n'existe nulle part ailleurs (verifie le 24/08 : absent des niveaux
+User et Machine, absent de PowerShell, absent de l'environnement des hooks). Mesure :
+bascule xhigh -> high a 18:11, le hook annoncait encore xhigh au prompt suivant. Non
+reparable en lisant ailleurs, donc DIT dans la consigne — sinon une bascule volontaire
+declenche un faux positif juste apres que l'utilisateur a eu raison.
+
 Limite assumee : ce hook ne peut pas EMPECHER. Il obtient au mieux un arret volontaire
 en debut de tour, avant la partie chere. C'est moins etanche qu'un blocage, en echange
 c'est le seul mecanisme qui voit ce qu'il faut voir.
@@ -71,7 +79,10 @@ substitut a la profondeur -- le nombre ne demontre pas un theoreme.
 Si le reglage courant convient : NE DIS RIEN, travaille normalement.
 Sinon : reponds UNIQUEMENT "{marqueur} <modele> + <effort> -- <raison en 8 mots>"
 et arrete-toi la. En cours de session, ne signale qu'un ecart net : basculer
-invalide le cache de contexte et se paie."""
+invalide le cache de contexte et se paie. Enfin, le reglage affiche ci-dessus est lu
+sur le tour PRECEDENT (le tour courant n'est pas encore ecrit au moment de ce hook) :
+s'il vient de changer, cette lecture est perimee -- ne signale jamais un ecart que
+l'utilisateur vient lui-meme de corriger."""
 
 
 def _effort_env() -> str:

@@ -670,6 +670,8 @@ def _verifier_gate_modele():
              and "claude-fable-5 / ultracode" in p1.stdout),
             ("le critere max/ultracode est le DECOUPAGE, pas la difficulte",
              "DECOUPAGE" in p1.stdout and "indivisible" in p1.stdout),
+            ("TROU 24/08 : la lecture a un tour de retard, la consigne le dit",
+             "PRECEDENT" in p1.stdout and "perimee" in p1.stdout),
             ("sortie en texte brut, JAMAIS du JSON (sinon lu comme une decision)",
              not _est_json(p1.stdout.strip())),
             ("transcript vide -> repli sur le defaut de settings.json",
