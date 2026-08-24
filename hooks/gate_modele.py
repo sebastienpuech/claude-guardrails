@@ -24,6 +24,14 @@ Trois designs ont ete essayes et ecartes avant celui-la (session du 24/08/2026) 
    zero latence. La profondeur d'un travail n'est pas une propriete du texte du
    prompt — c'est une propriete du travail, que le texte ne fait que designer.
 
+Le bareme croise DEUX axes, pas un (corrige le 24/08 apres verification a l'ecran) :
+la profondeur du noyau (fable ou non) et le decoupage du travail (ultracode ou non).
+« ultracode » n'est PAS une valeur d'effort -- les transcripts ne connaissent que
+high/xhigh/max (16 419 tours mesures, zero « ultracode »). C'est la position haute du
+selecteur de Claude Code, qui pose max ET allume l'orchestration multi-agents en un
+seul geste ; elle est proposee sur Fable comme sur Opus. On ne peut donc pas cumuler
+« max » et « ultracode » : ce sont deux crans du meme curseur.
+
 Limite assumee : ce hook ne peut pas EMPECHER. Il obtient au mieux un arret volontaire
 en debut de tour, avant la partie chere. C'est moins etanche qu'un blocage, en echange
 c'est le seul mecanisme qui voit ce qu'il faut voir.
@@ -49,12 +57,17 @@ MARQUEUR = "[[MODELE]]"   # ASCII volontaire : greppable, aucun risque d'encodag
 
 CONSIGNE = """[reglage courant : modele={modele} / effort={effort}]
 Avant de traiter ce message, juge l'ampleur et la profondeur REELLES du travail
-demande -- pas la longueur du message. Bareme :
-  consultation / lookup / geste mecanique .... claude-sonnet-5 / medium
+demande -- pas la longueur du message. Deux axes : la PROFONDEUR du noyau (fable
+s'il est dur : preuve, arbitrage d'architecture, philo ou meta a enjeu) et le
+DECOUPAGE (ultracode si le travail se scinde vraiment en N parties parallelisables).
+  consultation, lookup, geste mecanique ...... claude-sonnet-5 / medium
   travail courant (code, doc, correction) .... claude-opus-5 / high
-  probleme dur, debug profond, plan .......... claude-opus-5 / xhigh
-  preuve formelle, philo ou meta a enjeu,
-  tres grand chantier, reprise apres echec ... claude-fable-5 / max
+  probleme dur, indivisible, plan ............ claude-opus-5 / xhigh
+  noyau dur, indivisible, a enjeu ............ claude-fable-5 / max
+  large et decoupable, noyau simple .......... claude-opus-5 / ultracode
+  large et decoupable, noyau dur (refonte) ... claude-fable-5 / ultracode
+ultracode lance N agents en parallele : c'est le cran le plus cher, et jamais un
+substitut a la profondeur -- le nombre ne demontre pas un theoreme.
 Si le reglage courant convient : NE DIS RIEN, travaille normalement.
 Sinon : reponds UNIQUEMENT "{marqueur} <modele> + <effort> -- <raison en 8 mots>"
 et arrete-toi la. En cours de session, ne signale qu'un ecart net : basculer

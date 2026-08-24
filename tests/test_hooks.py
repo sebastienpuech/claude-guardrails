@@ -661,9 +661,15 @@ def _verifier_gate_modele():
              "effort=high]" in p1.stdout),
             ("le marqueur de mesure est present et greppable",
              "[[MODELE]]" in p1.stdout),
-            ("le bareme cite les quatre paliers",
+            ("le bareme cite les trois modeles et les deux axes",
              all(m in p1.stdout for m in
-                 ("claude-sonnet-5", "claude-opus-5", "claude-fable-5", "max"))),
+                 ("claude-sonnet-5", "claude-opus-5", "claude-fable-5",
+                  "medium", "high", "xhigh", "max", "ultracode"))),
+            ("ultracode figure sur Fable ET sur Opus (verifie a l'ecran 24/08)",
+             "claude-opus-5 / ultracode" in p1.stdout
+             and "claude-fable-5 / ultracode" in p1.stdout),
+            ("le critere max/ultracode est le DECOUPAGE, pas la difficulte",
+             "DECOUPAGE" in p1.stdout and "indivisible" in p1.stdout),
             ("sortie en texte brut, JAMAIS du JSON (sinon lu comme une decision)",
              not _est_json(p1.stdout.strip())),
             ("transcript vide -> repli sur le defaut de settings.json",

@@ -84,7 +84,14 @@
   Interrupteur : `CLAUDE_GATE_MODELE=off`. **Fait mesuré, documenté nulle part ailleurs :
   `CLAUDE_EFFORT` n'est PAS hérité par un hook lancé par Claude Code.** Le transcript porte
   `message.model` et `effort` sur la même ligne — c'est là qu'il faut lire, pas dans
-  l'environnement. **Seuil d'abandon écrit d'avance : si le marqueur `[[MODELE]]`
+  l'environnement. **Barème à deux axes depuis le 24/08** : la profondeur du noyau
+  (Fable ou non) et le découpage du travail (ultracode ou non). `ultracode` n'est PAS
+  une valeur d'effort — les transcripts ne connaissent que `high`/`xhigh`/`max`
+  (16 419 tours mesurés, zéro « ultracode »). C'est la **position haute du sélecteur**
+  de Claude Code, qui pose `max` ET allume l'orchestration multi-agents d'un seul geste,
+  proposée sur Fable comme sur Opus. On ne cumule donc jamais `max` et `ultracode` :
+  deux crans du même curseur. Le critère qui les sépare n'est pas la difficulté, c'est
+  **le découpage** — le nombre ne démontre pas un théorème. **Seuil d'abandon écrit d'avance : si le marqueur `[[MODELE]]`
   n'apparaît dans aucun transcript d'ici au 07/09, le hook ne sert à rien et on le retire.**
 
 - **Re-mesure prévue vers le 2026-09-02** : `python audit/audit_usage.py 14`, pour voir si
