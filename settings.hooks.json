@@ -1,5 +1,5 @@
 {
-  "_commentaire": "Fragment de reference — a fusionner dans ~/.claude/settings.json. deploy.ps1 VERIFIE la presence de ces entrees, il ne reecrit jamais settings.json (config utilisateur : on ne patche pas du JSON a l'aveugle).",
+  "_commentaire": "Fragment de reference \u2014 a fusionner dans ~/.claude/settings.json. deploy.ps1 VERIFIE la presence de ces entrees, il ne reecrit jamais settings.json (config utilisateur : on ne patche pas du JSON a l'aveugle).",
   "_commentaire_env": "Audit forfait 2026-08-19 : 91 % de la conso = contexte (sessions > 200k, rechauffages cache). AUTO_COMPACT_WINDOW=120000 => compaction auto vers ~100k ; SUBAGENT_MODEL=sonnet => sous-agents sur Sonnet 5 sauf 'model:' dans .claude/agents/*.md. Verifier en session : /autocompact.",
   "env": {
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "120000",
@@ -10,9 +10,10 @@
       "Bash(git commit:*)"
     ]
   },
-  "_commentaire_lecons": "SessionStart + PostToolUse (2026-08-18) : les deux moities du skill lecon-de-repo. AUCUNE cle 'if' — incident du 2026-07-27, une cle non documentee desactive le hook en silence ; le filtrage se fait dans le script.",
+  "_commentaire_lecons": "SessionStart + PostToolUse (2026-08-18) : les deux moities du skill lecon-de-repo. AUCUNE cle 'if' \u2014 incident du 2026-07-27, une cle non documentee desactive le hook en silence ; le filtrage se fait dans le script.",
   "_commentaire_checkpoint": "PreCompact (2026-08-19) : ecrit un point d'etape sur disque avant chaque compaction (auto ou /compact). Ce qui n'existait que dans la conversation survit dans ~/.claude/checkpoints/. Fail-open assume : ce hook ne doit jamais bloquer une compaction.",
-  "_commentaire_journal": "SessionStart (2026-08-20) : injecte le bloc « Etat actuel » de journal.md a l ouverture. Audit forfait : 88 % du cache_write des grosses sessions est du rechauffage (re-expliquer ou on en est). La convention journal.md existait, seul le cote ECRITURE etait tenu ; ce hook automatise la LECTURE. Bloc d etat seul, plafonne a 8000 car : injecter les 80 Ko du journal couterait plus cher que le probleme.",
+  "_commentaire_journal": "SessionStart (2026-08-20) : injecte le bloc \u00ab Etat actuel \u00bb de journal.md a l ouverture. Audit forfait : 88 % du cache_write des grosses sessions est du rechauffage (re-expliquer ou on en est). La convention journal.md existait, seul le cote ECRITURE etait tenu ; ce hook automatise la LECTURE. Bloc d etat seul, plafonne a 8000 car : injecter les 80 Ko du journal couterait plus cher que le probleme.",
+  "_commentaire_lisibilite": "Stop (2026-08-24) : MODE OBSERVATION, ne bloque jamais. Ecrit une ligne par reponse >2000 car dans ~/.claude/verifie-lisibilite/mesures.csv (caracteres, demandes, tableaux, puces, titres, serie de prose max). Motif : la regle de style existait depuis des mois et RIEN ne mesurait son respect ; le seul chiffre datait de juillet. Le mode bloquant existe derriere CLAUDE_VERIFIE_LISIBILITE=bloquant mais est DECONSEILLE : rejeu sur 246 tours = 3 declenchements au seuil utile, 62-96 % au seuil sensible. Un hook ne gate pas une norme.",
   "hooks": {
     "PreCompact": [
       {
@@ -91,6 +92,17 @@
           {
             "type": "command",
             "command": "python \"<HOME>/.claude/hooks/gate_modele.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"<HOME>/.claude/hooks/verifie_lisibilite_reponse.py\"",
             "timeout": 15
           }
         ]
