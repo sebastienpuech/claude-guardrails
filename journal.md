@@ -14,6 +14,16 @@
 
 ## État actuel (glissant)
 
+- **Couche globale : 2 sections neuves + 1 filet + 1 garde-fou (25/08).** `CLAUDE.md` global porte
+  désormais « Contrat d'entrée » et « Sous-agents » (issus du rapport `/insights` du 24/08),
+  déployés et conformes (`deploy.ps1 -Verifier` = exit 0). Hook Stop `autosauvegarde_config.py` :
+  copie **non destructive** de tout fichier de `~/.claude` qui change, vers `.sauvegardes/auto/`.
+  `deploy.ps1` sauvegarde désormais toute cible avant de l'écraser. Le golden (149 cas) tourne en
+  **pre-commit** dès qu'un commit touche `hooks/` ou `tests/` — contre-épreuve passée.
+  Restent ouverts : `rappel_carte.py` non commité, `rappel_revue.py` déployé sans source,
+  `verifie_lisibilite_reponse.py` absent de `$attendus`, et l'ordre des entrées de ce journal
+  qui contredit `journal_etat.py` (détail dans l'entrée du 25/08).
+
 - **Compactage : la variable est morte, le hook prend le relais (23/08).**
   `CLAUDE_CODE_AUTO_COMPACT_WINDOW` a vécu 36 h (posée 19/08 13:01, retirée 20/08 21:15) et
   produit 167 compactages en deux jours. Depuis, plus **aucun** compactage automatique :
@@ -287,3 +297,64 @@ Deux affirmations de Claude, fausses, corrigées par les faits en séance : « a
 sépare le théorème d'une question anodine » (faux — le lexique de preuve le fait, la vraie
 limite est ailleurs) et « les hooks sont chargés au démarrage, cette session ne le verra
 pas » (faux — il a tiré au prompt suivant, sans redémarrage).
+
+### 2026-08-25 — l'audit d'usage entre dans la couche globale, et le golden passe en pre-commit
+
+Point de départ : le rapport `/insights` du 24/08 (32 sessions analysées, 81 commits). Sébastien
+a demandé d'appliquer **tout** ce qu'il proposait. Les 6 ajouts CLAUDE.md ont été intégrés **au
+bon étage** plutôt qu'empilés en 6 sections neuves : quatre d'entre eux recoupaient des règles
+déjà écrites (Git, Environnement, Style de sortie, Honnêteté épistémique). Deux sections neuves
+seulement : **« Contrat d'entrée »** (reformuler, désambiguïser avant de lancer un agent,
+discipline de périmètre) et **« Sous-agents »** (contrat de retour, re-vérification des constats
+négatifs, écriture au fil de l'eau).
+
+Une tension a été tranchée explicitement : la proposition disait « attends un go » avant de
+commencer. Repris tel quel, ça relançait les questions de rythme que la section « Autonomie » a
+supprimées après l'audit des 538 questions. Écrit donc comme : go **seulement si la reformulation
+change quelque chose**, et mention explicite que ce contrat ne rouvre pas les questions de rythme.
+
+**La dérive d'abord.** `CLAUDE-global.md` avait 20 lignes de retard sur le déployé (le bloc
+« Harnais méta » du 24/08 avait été écrit directement dans `~/.claude/CLAUDE.md`). Un
+`deploy.ps1` l'aurait écrasé. Remonté et commité séparément (`247de92`) avant toute autre
+édition.
+
+**Le filet de config (`autosauvegarde_config.py`, hook Stop).** Le rapport proposait
+`git stash push -u .claude/`. Écarté sur deux défauts : `stash` **retire** les modifications du
+répertoire de travail — un hook de fin de tour ferait disparaître le travail en cours — et
+`~/.claude` n'est pas un dépôt git, la commande y échouerait de toute façon. Implémenté en copie
+non destructive vers `~/.claude/.sauvegardes/auto/<horodatage>/`, rotation à 30. La correction à
+la **cause racine** de l'incident du 21/08 est ailleurs : `deploy.ps1` sauvegarde désormais toute
+cible avant de l'écraser (vu à l'œuvre au premier déploiement :
+`.sauvegardes/deploiements/2026-08-25_120850/CLAUDE.md`).
+
+12 cas neufs au golden, dont un **échec réel attrapé** : la rotation triait les snapshots par
+nom. Un nom hors format aurait fait supprimer les mauvais. Corrigé en tri par date de
+modification, le nom départageant les ex aequo. Golden : 149 cas verts.
+
+**Le pre-commit.** Le golden existait depuis le 27/07 mais ne tournait qu'à la main et dans
+`deploy.ps1` : on pouvait commiter un hook cassé et ne le découvrir qu'au déploiement suivant.
+`githooks/pre-commit-local` le lance dès qu'un commit touche `hooks/` ou `tests/`.
+
+Contre-épreuve faite deux fois, et **la première n'a rien prouvé** : `MAX_SNAPSHOTS = 0` ne casse
+aucun test, parce que `[:-0]` vaut `[:0]` et non « tout ». Le commit de sabotage est passé et a
+dû être défait. La seconde, un `shutil.move` glissé à la place du `copy2`, est bien refusée. Elle
+a révélé deux défauts d'affichage du hook, corrigés tous les deux : le filtre `echec` attrapait
+des lignes `OK` dont le libellé contient le mot, et un golden mort sur exception avant son résumé
+produisait un refus **muet**.
+
+À vérifier au prochain tour, non tranché : le hook `Stop` a-t-il tiré tout seul dans la session
+qui l'a posé ? L'absence de snapshot automatique observée ne prouve rien — aucun tour ne s'est
+terminé entre le déploiement (12:08) et la mesure (12:11). L'entrée du 24/08 ci-dessus rappelle
+qu'un hook a déjà démenti le « pas avant redémarrage ».
+
+Deux dérives connues et **non traitées**, hors périmètre : `hooks/rappel_carte.py` est dans le
+repo sans être commité, et `~/.claude/hooks/rappel_revue.py` est déployé sans exister dans le
+repo. `deploy.ps1` a copié `rappel_carte.py` au passage — sans effet, il n'est déclaré nulle part
+dans `settings.json`. Troisième trou repéré, non comblé : `verifie_lisibilite_reponse.py` (hook
+Stop, actif) n'est pas dans la liste `$attendus` de `deploy.ps1` — un hook non vérifié est un
+hook dont on ne sait pas s'il tourne.
+
+Quatrième constat, non corrigé : ce journal range ses entrées en ordre **croissant** (la plus
+récente en bas), alors que `journal_etat.py` injecte les trois **premières** trouvées. Le hook
+montre donc ici les entrées du 20/08, pas les dernières. À arbitrer : inverser le fichier ou le
+hook.
