@@ -7,8 +7,23 @@ Pourquoi ici et pas dans le hook Claude : le hook `block_git_add_all.py` lit le 
 de la commande. Test adversarial du 2026-08-21 : 12 contournements sur 17 passent
 (alias, variable, xargs, substitution, script .sh, guillemets). Deux causes racines
 sont non colmatables par regex — il faudrait executer la commande pour savoir ce
-qu'elle fait. Ce hook-ci lit l'ETAT REEL du staging : toutes les routes (alias,
-script, staging manuel, autre session, git gui) convergent sur le commit.
+qu'elle fait. Ce hook-ci lit l'ETAT REEL du staging, ou toutes ces routes-la
+convergent : alias, script, staging manuel, autre session, git gui.
+
+CORRECTION (red team du 2026-08-25) : la version precedente de cette docstring
+affirmait que « toutes les routes convergent sur le commit ». C'ETAIT FAUX, et la
+phrase servait de garantie a l'etage du dessus, qui s'y reposait pour ses trous
+connus. Mesure sur depots jetables, 11 scenarios :
+  - `git merge --no-ff` ne declenche PAS `pre-commit` mais `pre-merge-commit`, qui
+    n'etait pas installe. Une fusion supprimant 40 fichiers / 1200 lignes entrait
+    sans un mot. → colmate le 25/08 : shim `githooks/pre-merge-commit`.
+  - `git revert`, `git cherry-pick` et `git rebase` ne declenchent AUCUN hook « pre- ».
+    Non blocables sans casser la porte `--no-verify` (voir alerte_commit_gros.py pour
+    les mesures qui ont ecarte `prepare-commit-msg`), et les bloquer serait un faux
+    positif : rejouer un commit nomme qui supprimait 4 000 lignes en supprime 4 000.
+    → couverts autrement, par une ALERTE post-commit non bloquante.
+Ce hook garde donc un perimetre exact : le commit ordinaire et l'amend. Ce qu'il ne
+couvre pas est nomme ci-dessus, plutot que suppose couvert.
 
 Seuils calibres sur les 1 198 commits reels des 10 repos de ~/dev (2026-08-21) :
   fichiers    p50=2  p90=8   p95=12  p99=110  max=800

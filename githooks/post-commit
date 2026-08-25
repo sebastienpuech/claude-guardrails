@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 # Shim central : core.hooksPath masque .git/hooks/, on rebranche le hook local.
+#
+# Alerte de taille apres coup (red team du 2026-08-25) : revert / cherry-pick / rebase
+# ne declenchent aucun hook « pre- », et ne peuvent donc pas etre bloques sans casser
+# la porte `--no-verify`. Ce hook ne refuse rien, il rend visible. Detail et mesures :
+# hooks/alerte_commit_gros.py. `|| true` : une alerte ne fait jamais echouer un commit
+# deja cree.
+python "$HOME/.claude/hooks/alerte_commit_gros.py" || true
+
 local_hook="$(git rev-parse --git-dir)/hooks/post-commit"
 if [ -x "$local_hook" ]; then exec "$local_hook" "$@"; fi
 exit 0

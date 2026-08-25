@@ -39,9 +39,23 @@ PATHSPECS_GLOBAUX = {".", "./", "*", "./*", ":", ":/", ":/.", ":(top)"}
 # git exige au moins `--a` / `--u` pour lever l'ambiguite ; on borne a 3 caracteres.
 LONGUES_INTERDITES = ("--all", "--update", "--no-ignore-removal")
 
-# Prefixe des options globales de git qui peuvent preceder le sous-commande `add`.
-_GLOBALES = r"(?:\s+(?:-C\s+\S+|-c\s+\S+|--git-dir=\S+|--work-tree=\S+|--exec-path=\S+|-p|--paginate|--no-pager))*"
+# Prefixe des options globales de git qui peuvent preceder la sous-commande `add`.
+#
+# v4 (2026-08-25) — red team : la liste nominative laissait passer 6 variantes, parce
+# qu'une option globale absente de la liste faisait echouer le motif ENTIER : le hook ne
+# regardait alors meme plus les arguments. `git -P add -A` staggeait tout sans un mot.
+# Mesure : 6 trous sur 8 variantes essayees, chacune verifiee efficace sur un depot reel.
+# Corrige en acceptant N'IMPORTE QUELLE option entre `git` et `add` — a cet endroit
+# precis de la ligne de commande, seule une option globale de git peut apparaitre, donc
+# un motif generique n'elargit pas la surface. Enumerer etait le defaut : toute option
+# oubliee, presente ou future, devenait une porte.
+_GLOBALES = r"(?:\s+(?:-[cC]\s+\S+|--[a-z][\w-]*(?:=\S+)?|-[a-zA-Z]))*"
 _MOTIF = re.compile(r"\bgit\b" + _GLOBALES + r"\s+add\b([^|;&><\n]*)")
+
+# v4 (2026-08-25) — red team : `--pathspec-from-file=liste.txt` lit les chemins AILLEURS
+# que sur la ligne de commande. Aucune analyse de texte ne peut savoir ce qu'il y a dans
+# le fichier — donc on refuse la forme elle-meme, seule reponse honnete.
+_HORS_LIGNE = ("--pathspec-from-file", "--pathspec-file-nul")
 
 # Faux positif du 2026-07-27 : un message de commit qui DOCUMENTE l'incident
 # (« git add --al passait ») etait lu comme une commande. Le contenu d'un -m/-F
@@ -67,6 +81,29 @@ def _est_court_interdit(arg: str) -> bool:
     return any(c in ("A", "u") for c in arg[1:])
 
 
+def _pathspec_non_borne(arg: str) -> str | None:
+    """Un pathspec qui ne designe pas un ensemble fini de fichiers nommes.
+
+    v4 (2026-08-25) — red team : la liste fermee PATHSPECS_GLOBAUX ratait 6 formes
+    (`:/*`, `:(glob)**`, `:(top,glob)**`, `:!zzz`, `:(exclude)zzz`, `**`), toutes
+    verifiees efficaces sur un depot reel. Enumerer les formes de « tout » est perdu
+    d'avance : la syntaxe des pathspecs magiques en fabrique a volonte, et `:!zzz`
+    (« tout sauf zzz ») en est un rappel — une exclusion est une inclusion de tout
+    le reste. On inverse donc la charge : un `git add` scope nomme ses fichiers.
+
+    Deux formes refusees, sans exception :
+      - tout argument commencant par `:`  → pathspec magique (Windows n'autorise pas
+        `:` dans un nom de fichier, donc aucun faux positif possible) ;
+      - tout argument contenant `*`       → glob, donc ensemble non borne (idem, `*`
+        est un caractere interdit dans un nom de fichier Windows).
+    """
+    if arg.startswith(":"):
+        return f"pathspec magique `{arg}` (designe un ensemble, pas des fichiers nommes)"
+    if "*" in arg:
+        return f"glob `{arg}` (ensemble non borne : lister les fichiers explicitement)"
+    return None
+
+
 def raison_de_bloquer(cmd: str) -> str | None:
     """Retourne la raison du blocage, ou None si la commande est scopee."""
     cmd = _MESSAGE.sub(" ", cmd)  # le texte d'un message n'est pas une commande
@@ -76,12 +113,20 @@ def raison_de_bloquer(cmd: str) -> str | None:
         except ValueError:  # guillemet non ferme : fail-closed
             return "commande non analysable (guillemet non ferme)"
         for arg in args:
+            if arg.split("=", 1)[0] in _HORS_LIGNE:
+                return (
+                    f"option `{arg}` (les chemins sont lus dans un fichier : "
+                    "impossible de verifier ce qui sera stage)"
+                )
             if _est_long_interdit(arg):
                 return f"option `{arg}` (prefixe de --all/--update : git accepte les abreviations)"
             if _est_court_interdit(arg):
                 return f"option `{arg}` (-A stage tout, -u stage toutes les suppressions suivies)"
             if arg in PATHSPECS_GLOBAUX:
                 return f"pathspec `{arg}` (designe tout le repo, pas le chantier)"
+            raison = _pathspec_non_borne(arg)
+            if raison:
+                return raison
     return None
 
 

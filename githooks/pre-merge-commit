@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Shim central appele pour TOUS les repos via `git config --global core.hooksPath`.
+#
+# Pourquoi ce fichier existe (red team du 2026-08-25) :
+# `git merge --no-ff` ne declenche PAS `pre-commit`. Mesure sur depot jetable : une
+# branche supprimant 40 fichiers / 1200 lignes est entree dans l'historique sans que
+# le garde-fou de taille ouvre la bouche. La docstring de pre_commit_taille.py
+# affirmait pourtant que « toutes les routes convergent sur le commit » : c'etait faux.
+# git a un hook distinct pour la fusion, et il n'etait pas installe.
+#
+# Porte de secours preservee : `git merge --no-verify` saute ce hook, comme
+# `git commit --no-verify` saute pre-commit. Un garde-fou sans porte se contourne
+# dans le dos.
+#
+# 1) garde-fou de taille (refuse une fusion anormalement grosse)
+# 2) enchaine sur le hook local du repo s'il existe (core.hooksPath le masquerait sinon)
+python "$HOME/.claude/hooks/pre_commit_taille.py" || exit 1
+
+local_hook="$(git rev-parse --git-dir)/hooks/pre-merge-commit"
+if [ -x "$local_hook" ]; then exec "$local_hook" "$@"; fi
+exit 0

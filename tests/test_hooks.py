@@ -36,6 +36,26 @@ CAS_GIT = [
     (f"{G} add *", True, "TROU 27/07 : glob expanse par le shell"),
     (f"{G} add :/", True, "TROU 27/07 : pathspec racine du repo"),
     (f"{G} add :(top)", True, "TROU 27/07 : pathspec magique racine"),
+    # --- red team du 2026-08-25 : 13 trous, chacun verifie efficace sur un depot reel
+    # (le hook laissait passer ET la commande staggeait bien les 6 chemins du bac d'essai).
+    # Famille A : une option globale hors liste faisait echouer le motif ENTIER.
+    (f"{G} --literal-pathspecs add -A", True, "TROU 25/08 : option globale hors liste"),
+    (f"{G} --no-optional-locks add -A", True, "TROU 25/08 : option globale hors liste"),
+    (f"{G} -P add -A", True, "TROU 25/08 : -P (alias de --no-pager), casse sur -p seul"),
+    (f"{G} --namespace=x add -A", True, "TROU 25/08 : option globale a valeur"),
+    (f"{G} --no-replace-objects add -A", True, "TROU 25/08 : option globale hors liste"),
+    (f"{G} --glob-pathspecs add -A", True, "TROU 25/08 : option globale hors liste"),
+    (f"{G} -c a=b -c c=d --literal-pathspecs add -A", True, "TROU 25/08 : globales combinees"),
+    # Famille B : formes de « tout » absentes de la liste fermee PATHSPECS_GLOBAUX.
+    (f"{G} add ':/*'", True, "TROU 25/08 : pathspec racine + glob"),
+    (f"{G} add ':(glob)**'", True, "TROU 25/08 : pathspec magique glob"),
+    (f"{G} add ':(top,glob)**'", True, "TROU 25/08 : magies combinees"),
+    (f"{G} add ':!zzz'", True, "TROU 25/08 : exclusion = inclusion de tout le reste"),
+    (f"{G} add ':(exclude)zzz'", True, "TROU 25/08 : idem, forme longue"),
+    (f"{G} add '**'", True, "TROU 25/08 : glob nu"),
+    # Famille C : les chemins sont lus hors de la ligne de commande.
+    (f"{G} add --pathspec-from-file=liste.txt", True, "TROU 25/08 : chemins lus dans un fichier"),
+    (f"{G} add --pathspec-from-file=-", True, "TROU 25/08 : chemins lus sur stdin"),
     # Faux positifs a ne pas produire
     (f"{G} add src/foo.py", False, "legitime : fichier explicite"),
     (f"{G} add src/foo.py src/bar.py", False, "legitime : plusieurs fichiers"),

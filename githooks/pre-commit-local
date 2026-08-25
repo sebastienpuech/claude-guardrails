@@ -15,32 +15,42 @@
 
 set -u
 racine="$(git rev-parse --show-toplevel)"
-concernes="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^(hooks/|tests/)' || true)"
+# githooks/ ajoute le 25/08 : les shims git sont eux aussi des garde-fous, et
+# tests/test_garde_fous_git.py est precisement la pour les surveiller.
+concernes="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^(hooks/|tests/|githooks/)' || true)"
 
 if [ -z "$concernes" ]; then
     exit 0
 fi
 
-echo "pre-commit : hooks/ ou tests/ touches -> golden des hooks..."
-if ! python "$racine/tests/test_hooks.py" > /tmp/golden-local.log 2>&1; then
+lancer_suite() {
+    # $1 = chemin du test, $2 = libelle
+    local test="$1" libelle="$2" log="/tmp/golden-local.log"
+    echo "pre-commit : $libelle..."
+    if python "$test" > "$log" 2>&1; then
+        return 0
+    fi
     echo ""
-    echo "REFUS : le golden des hooks est ROUGE. Rien n'est commite." >&2
+    echo "REFUS : $libelle est ROUGE. Rien n'est commite." >&2
     # Ancres en debut de ligne : « echec » tout court matchait aussi des lignes OK
     # dont le libelle contient le mot (contre-epreuve du 25/08/2026).
-    resume="$(grep -E "^FAIL|^ROUGE" /tmp/golden-local.log | head -20)"
+    resume="$(grep -E "^FAIL|^ROUGE" "$log" | head -20)"
     if [ -n "$resume" ]; then
         echo "$resume" >&2
     else
-        # Le golden peut mourir sur une exception avant d'imprimer le moindre FAIL
+        # La suite peut mourir sur une exception avant d'imprimer le moindre FAIL
         # (contre-epreuve : un `shutil.move` a la place d'un `copy2` fait disparaitre
         # le fichier que le test suivant relit). Sans ce repli, le refus etait muet.
-        echo "  (golden interrompu avant son resume - fin du log :)" >&2
-        tail -6 /tmp/golden-local.log >&2
+        echo "  (suite interrompue avant son resume - fin du log :)" >&2
+        tail -6 "$log" >&2
     fi
     echo "" >&2
-    echo "  Detail complet : /tmp/golden-local.log" >&2
-    echo "  Relancer       : python tests/test_hooks.py" >&2
-    exit 1
-fi
-echo "pre-commit : golden vert."
+    echo "  Detail complet : $log" >&2
+    echo "  Relancer       : python $test" >&2
+    return 1
+}
+
+lancer_suite "$racine/tests/test_hooks.py" "golden des hooks Claude Code" || exit 1
+lancer_suite "$racine/tests/test_garde_fous_git.py" "garde-fous git (etage 2)" || exit 1
+echo "pre-commit : les deux suites sont vertes."
 exit 0
