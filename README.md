@@ -16,11 +16,25 @@ ce repo ; copie déployée : `~/.claude/` sur chaque machine.
   contenu a changé est **copié** dans `~/.claude/.sauvegardes/auto/<horodatage>/` (rotation à 30).
   Incident du 21/08/2026 : un déploiement a écrasé deux hooks non commités, reconstitués à la main
   dans les transcripts. Il copie, il ne déplace jamais — un `git stash` viderait le plan de travail.
-- `tests/test_hooks.py` — golden des hooks : contournement des deux bloquants, comportement des
-  autres. 149 cas, `exit 0` = vert.
-- `deploy.ps1` — déploie et vérifie la conformité. Refuse de déployer si le golden est rouge.
-  **Sauvegarde toute cible avant de l'écraser** dans `~/.claude/.sauvegardes/deploiements/<horodatage>/` :
-  c'est la correction à la cause racine de l'incident du 21/08/2026.
+- `hooks/alerte_commit_gros.py` — hook git `post-commit`, **non bloquant**. `git revert`,
+  `cherry-pick` et `rebase` ne déclenchent aucun hook « pre- » : ils ne sont donc pas blocables
+  sans fermer la porte `--no-verify`. Cette alerte les rend visibles après coup, en nommant le
+  SHA. Elle reste muette sur un commit ordinaire.
+- `githooks/pre-merge-commit` — shim global. `git merge --no-ff` ne déclenche **pas**
+  `pre-commit` : une fusion supprimant 40 fichiers entrait sans un mot (red team du 25/08/2026).
+  Porte de secours préservée : `git merge --no-verify`.
+- `tests/test_hooks.py` — golden des hooks Claude Code : contournement des deux bloquants,
+  comportement des autres. 164 cas, `exit 0` = vert.
+- `tests/test_garde_fous_git.py` — golden des garde-fous **git** : 10 scénarios joués sur des
+  dépôts jetables (blocages, portes de secours, alertes, et le cas négatif du petit commit qui
+  doit rester silencieux). Les dépôts héritent du vrai montage — un banc qui installe ses propres
+  hooks teste un montage imaginaire, et c'est ce qui avait masqué le trou de la fusion.
+- `deploy.ps1` — déploie et vérifie la conformité. Refuse de déployer si l'un des deux goldens est
+  rouge. **Sauvegarde toute cible avant de l'écraser** dans
+  `~/.claude/.sauvegardes/deploiements/<horodatage>/` : c'est la correction à la cause racine de
+  l'incident du 21/08/2026. Depuis le 25/08 il déploie aussi `githooks/` et vérifie que
+  `core.hooksPath` pointe bien dessus — présence et branchement sont deux choses, et un shim non
+  branché ne s'exécute jamais.
 - `settings.hooks.json` — le fragment de référence à fusionner dans `settings.json`.
 - `githooks/pre-commit-local` — hook pre-commit **local à ce repo** : lance le golden dès
   qu'un commit touche `hooks/` ou `tests/`, et refuse le commit s'il est rouge. Le golden existait

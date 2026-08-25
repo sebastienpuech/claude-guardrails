@@ -188,12 +188,37 @@ CAS = [
 ]
 
 
+def _montage_ok():
+    """Les shims sont-ils presents ET branches ? Retourne la liste des manques.
+
+    Presence et branchement sont deux choses : un shim parfaitement copie mais un
+    `core.hooksPath` qui pointe ailleurs ne s'execute jamais. On verifie les deux,
+    sans quoi la suite entiere pourrait passer au vert sur un montage mort.
+    """
+    manques = []
+    dossier = Path.home() / ".claude" / "githooks"
+    for nom in ("pre-commit", "post-commit", "pre-merge-commit"):
+        if not (dossier / nom).exists():
+            manques.append(f"shim {nom} absent de ~/.claude/githooks/")
+    chemin = subprocess.run(
+        ["git", "config", "--global", "core.hooksPath"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    ).stdout.strip()
+    if not chemin:
+        manques.append("core.hooksPath non defini : les shims ne seront jamais appeles")
+    elif Path(chemin).resolve() != dossier.resolve():
+        manques.append(f"core.hooksPath pointe ailleurs : {chemin} (attendu {dossier})")
+    return manques
+
+
 def verifier():
     """Retourne le nombre d'echecs."""
     print("\n--- garde-fous git (etage 2, red team 25/08) ---")
-    if not (Path.home() / ".claude" / "githooks" / "pre-merge-commit").exists():
-        print("FAIL  shim pre-merge-commit absent de ~/.claude/githooks/")
-        return 1
+    manques = _montage_ok()
+    if manques:
+        for m in manques:
+            print(f"FAIL  {m}")
+        return len(manques)
     base = tempfile.mkdtemp(prefix="tgf_")
     echecs = 0
     try:

@@ -37,20 +37,26 @@ function Sauvegarder-Avant-Ecrasement {
 Write-Host "Source : $Source"
 Write-Host "Cible  : $Cible`n"
 
-# --- 1. Golden vert avant tout deploiement ---------------------------------
-Write-Host "[1/4] Test de contournement des hooks..."
-& python (Join-Path $Source "tests\test_hooks.py") | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "REFUS : le golden des hooks est rouge. Rien n'est deploye." -ForegroundColor Red
-    Write-Host "        Relancer : python tests\test_hooks.py"
-    exit 2
+# --- 1. Goldens verts avant tout deploiement -------------------------------
+# Les DEUX suites : les hooks Claude Code, et les garde-fous git (etage 2, ajoute
+# le 25/08 apres la red team). Deployer avec l'une des deux rouge reviendrait a
+# propager une regression sur la machine.
+Write-Host "[1/6] Tests de contournement..."
+foreach ($suite in @("tests\test_hooks.py", "tests\test_garde_fous_git.py")) {
+    & python (Join-Path $Source $suite) | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "REFUS : $suite est rouge. Rien n'est deploye." -ForegroundColor Red
+        Write-Host "        Relancer : python $suite"
+        exit 2
+    }
+    Write-Host "      $suite : vert."
 }
-Write-Host "      golden vert.`n"
+Write-Host ""
 
 # --- 2. CLAUDE.md ----------------------------------------------------------
 # Source nommee CLAUDE-global.md pour ne PAS etre auto-chargee comme memoire de
 # sous-dossier quand on travaille dans ce repo. Deployee sous son nom canonique.
-Write-Host "[2/4] CLAUDE-global.md -> ~/.claude/CLAUDE.md"
+Write-Host "[2/6] CLAUDE-global.md -> ~/.claude/CLAUDE.md"
 $src = Join-Path $Source "CLAUDE-global.md"
 $dst = Join-Path $Cible  "CLAUDE.md"
 $identique = (Test-Path $dst) -and
@@ -67,7 +73,7 @@ if ($identique) {
 }
 
 # --- 3. hooks --------------------------------------------------------------
-Write-Host "`n[3/4] hooks/"
+Write-Host "`n[3/6] hooks/"
 $dossierHooks = Join-Path $Cible "hooks"
 if (-not (Test-Path $dossierHooks)) { New-Item -ItemType Directory $dossierHooks | Out-Null }
 foreach ($hook in Get-ChildItem (Join-Path $Source "hooks") -Filter *.py) {
@@ -86,8 +92,74 @@ foreach ($hook in Get-ChildItem (Join-Path $Source "hooks") -Filter *.py) {
     }
 }
 
-# --- 4. settings.json : verification seule ---------------------------------
-Write-Host "`n[4/4] settings.json (verification, aucune ecriture)"
+# --- 4. githooks/ : les shims git globaux ----------------------------------
+# Ajoute le 2026-08-25. Ces shims etaient installes A LA MAIN depuis le 21/08 :
+# le script ne les deployait pas et `-Verifier` ne signalait pas leur absence.
+# Un garde-fou qui ne survit qu'a une copie manuelle est decoratif — c'est
+# exactement le trou par lequel `pre-merge-commit` aurait disparu au premier
+# redeploiement, et n'aurait jamais existe sur une autre machine.
+#
+# Liste EXPLICITE, et non un `*` : githooks/ contient aussi des hooks propres a
+# CE depot (`pre-commit-local`), qui vont dans .git/hooks/ et n'ont rien
+# a faire dans la couche globale. Le controle d'exhaustivite juste apres empeche
+# la liste de se perimer en silence.
+Write-Host "`n[4/6] githooks/ -> ~/.claude/githooks/ (shims globaux)"
+$Shims = @("pre-commit", "post-commit", "pre-merge-commit")
+$dossierShims = Join-Path $Cible "githooks"
+if (-not (Test-Path $dossierShims)) { New-Item -ItemType Directory $dossierShims | Out-Null }
+foreach ($nom in $Shims) {
+    $src = Join-Path $Source "githooks\$nom"
+    if (-not (Test-Path $src)) {
+        Write-Host "      $nom : ABSENT DE LA SOURCE." -ForegroundColor Red
+        $derive++
+        continue
+    }
+    $dst = Join-Path $dossierShims $nom
+    $identique = (Test-Path $dst) -and
+                 ((Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash)
+    if ($identique) {
+        Write-Host "      $nom : a jour."
+    } elseif ($Verifier) {
+        Write-Host "      $nom : DERIVE." -ForegroundColor Yellow
+        $derive++
+    } else {
+        Sauvegarder-Avant-Ecrasement $dst
+        Copy-Item $src $dst -Force
+        Write-Host "      $nom : deploye."
+    }
+}
+# Exhaustivite : tout fichier de githooks/ qui n'est ni un shim global connu, ni
+# un hook clairement propre a un depot (suffixe `-<nom du depot>`), est signale.
+# Sans ce controle, ajouter un shim et oublier de l'inscrire ici le rendrait
+# invisible — le defaut qu'on vient de corriger se reformerait tout seul.
+foreach ($f in Get-ChildItem (Join-Path $Source "githooks") -File) {
+    if ($Shims -contains $f.Name) { continue }
+    if ($f.Name -like "*-*" -and ($Shims | Where-Object { $f.Name -like "$_-*" })) { continue }
+    Write-Host "      NON DEPLOYE : githooks\$($f.Name) n'est dans aucune categorie." -ForegroundColor Yellow
+    Write-Host "        -> l'ajouter a `$Shims, ou le nommer <shim>-<depot> s'il est local."
+    $derive++
+}
+
+# --- 5. core.hooksPath : sans lui, les shims ne sont jamais appeles ---------
+# Un shim parfaitement deploye mais non branche ne s'execute jamais. On verifie
+# donc le branchement, pas seulement la presence du fichier.
+Write-Host "`n[5/6] git config --global core.hooksPath"
+$hooksPath = (& git config --global core.hooksPath) 2>$null
+$attenduPath = ($dossierShims -replace '\\', '/')
+if (-not $hooksPath) {
+    Write-Host "      NON DEFINI : les shims ne seront jamais appeles." -ForegroundColor Red
+    Write-Host "        -> git config --global core.hooksPath `"$attenduPath`""
+    $derive++
+} elseif (($hooksPath -replace '\\', '/').TrimEnd('/') -ne $attenduPath.TrimEnd('/')) {
+    Write-Host "      POINTE AILLEURS : $hooksPath" -ForegroundColor Red
+    Write-Host "        -> attendu : $attenduPath"
+    $derive++
+} else {
+    Write-Host "      OK      $hooksPath"
+}
+
+# --- 6. settings.json : verification seule ---------------------------------
+Write-Host "`n[6/6] settings.json (verification, aucune ecriture)"
 $fichierSettings = Join-Path $Cible "settings.json"
 if (-not (Test-Path $fichierSettings)) {
     Write-Host "      ABSENT : creer settings.json depuis settings.hooks.json." -ForegroundColor Red
