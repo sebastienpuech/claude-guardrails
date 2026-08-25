@@ -18,6 +18,22 @@ $Source = $PSScriptRoot
 $Cible  = Join-Path $HOME ".claude"
 $derive = 0
 
+# --- Sauvegarde avant ecrasement -------------------------------------------
+# Incident du 21/08/2026 : ce script a ecrase deux hooks dont le travail n'etait
+# pas commite ; il a fallu les reconstituer a la main dans les transcripts. Une
+# cible qui differe de la source contient peut-etre du travail qui n'existe nulle
+# part ailleurs. On ne l'ecrase plus sans en garder une copie horodatee.
+$Sauvegardes = Join-Path $Cible ".sauvegardes\deploiements"
+function Sauvegarder-Avant-Ecrasement {
+    param([string]$Fichier)
+    if (-not (Test-Path $Fichier)) { return }
+    $horodatage = Get-Date -Format "yyyy-MM-dd_HHmmss"
+    $dossier = Join-Path $Sauvegardes $horodatage
+    if (-not (Test-Path $dossier)) { New-Item -ItemType Directory $dossier -Force | Out-Null }
+    Copy-Item $Fichier (Join-Path $dossier (Split-Path $Fichier -Leaf)) -Force
+    Write-Host "      sauvegarde : .sauvegardes\deploiements\$horodatage\$(Split-Path $Fichier -Leaf)" -ForegroundColor DarkGray
+}
+
 Write-Host "Source : $Source"
 Write-Host "Cible  : $Cible`n"
 
@@ -45,6 +61,7 @@ if ($identique) {
     Write-Host "      DERIVE : le deploye differe de la source." -ForegroundColor Yellow
     $derive++
 } else {
+    Sauvegarder-Avant-Ecrasement $dst
     Copy-Item $src $dst -Force
     Write-Host "      deploye."
 }
@@ -63,6 +80,7 @@ foreach ($hook in Get-ChildItem (Join-Path $Source "hooks") -Filter *.py) {
         Write-Host "      $($hook.Name) : DERIVE." -ForegroundColor Yellow
         $derive++
     } else {
+        Sauvegarder-Avant-Ecrasement $dst
         Copy-Item $hook.FullName $dst -Force
         Write-Host "      $($hook.Name) : deploye."
     }
@@ -88,7 +106,8 @@ $attendus = @(
     @{ event = "PostToolUse";  matcher = "Bash|PowerShell";         hook = "rappel_lecon.py" },
     @{ event = "PreCompact";   matcher = "";                        hook = "checkpoint_precompact.py" },
     @{ event = "UserPromptSubmit"; matcher = "";                    hook = "alerte_contexte.py" },
-    @{ event = "UserPromptSubmit"; matcher = "";                    hook = "gate_modele.py" }
+    @{ event = "UserPromptSubmit"; matcher = "";                    hook = "gate_modele.py" },
+    @{ event = "Stop";             matcher = "";                    hook = "autosauvegarde_config.py" }
 )
 foreach ($a in $attendus) {
     $declares = $conf.hooks.($a.event) |

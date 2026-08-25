@@ -11,8 +11,16 @@ ce repo ; copie déployée : `~/.claude/` sur chaque machine.
   `local-agent-mode-sessions` (cache cloud volatile, toute édition y est perdue).
 - `hooks/block_git_add_all.py` — hook PreToolUse : refuse tout `git add` non scopé au chantier
   (incident : 4 545 lignes de suppression avalées par le commit d'une autre session).
-- `tests/test_hooks.py` — test de contournement des deux hooks. 39 cas, `exit 0` = vert.
+- `hooks/autosauvegarde_config.py` — hook Stop : filet **non destructif** sur la config. À chaque
+  fin de tour, tout fichier de `~/.claude` (CLAUDE.md, `settings*.json`, `hooks/*.py`) dont le
+  contenu a changé est **copié** dans `~/.claude/.sauvegardes/auto/<horodatage>/` (rotation à 30).
+  Incident du 21/08/2026 : un déploiement a écrasé deux hooks non commités, reconstitués à la main
+  dans les transcripts. Il copie, il ne déplace jamais — un `git stash` viderait le plan de travail.
+- `tests/test_hooks.py` — golden des hooks : contournement des deux bloquants, comportement des
+  autres. 149 cas, `exit 0` = vert.
 - `deploy.ps1` — déploie et vérifie la conformité. Refuse de déployer si le golden est rouge.
+  **Sauvegarde toute cible avant de l'écraser** dans `~/.claude/.sauvegardes/deploiements/<horodatage>/` :
+  c'est la correction à la cause racine de l'incident du 21/08/2026.
 - `settings.hooks.json` — le fragment de référence à fusionner dans `settings.json`.
 
 ## Déploiement sur une machine

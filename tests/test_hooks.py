@@ -699,6 +699,77 @@ def _verifier_gate_modele():
     return echecs
 
 
+def _verifier_autosauvegarde():
+    """autosauvegarde_config.py : copie ce qui change, ne deplace JAMAIS rien.
+
+    Le filet repond a l'incident du 21/08/2026 (deploiement qui ecrase du travail
+    de hook non commite). La propriete qui compte n'est pas « ca sauvegarde » mais
+    « ca ne touche pas a l'original » : la suggestion d'origine passait par
+    `git stash push`, qui retire les fichiers du repertoire de travail. Un filet
+    qui vide le plan de travail a chaque fin de tour serait pire que le mal.
+    """
+    import tempfile
+    print("\n--- autosauvegarde_config.py (filet de config) ---")
+    mod = _charger("autosauvegarde_config.py")
+    echecs = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        cible = Path(tmp)
+        (cible / "hooks").mkdir()
+        settings = cible / "settings.json"
+        settings.write_text('{"a": 1}', encoding="utf-8")
+        hook = cible / "hooks" / "un_hook.py"
+        hook.write_text("print('v1')\n", encoding="utf-8")
+        auto = cible / ".sauvegardes" / "auto"
+        cas = []
+
+        copies = mod.snapshot(cible, horodatage="T1")
+        cas.append(("1er passage : les 2 fichiers sont sauvegardes", len(copies) == 2))
+        cas.append(("settings.json copie",
+                    (auto / "T1" / "settings.json").read_text(encoding="utf-8") == '{"a": 1}'))
+        cas.append(("le hook est copie sous son sous-dossier",
+                    (auto / "T1" / "hooks" / "un_hook.py").is_file()))
+
+        # LA propriete du design : l'original reste en place, intact.
+        cas.append(("l'original n'a pas bouge", hook.is_file()))
+        cas.append(("l'original n'est pas modifie",
+                    hook.read_text(encoding="utf-8") == "print('v1')\n"))
+
+        cas.append(("2e passage sans changement : rien de copie",
+                    mod.snapshot(cible, horodatage="T2") == []))
+        cas.append(("aucun snapshot vide cree", not (auto / "T2").exists()))
+
+        hook.write_text("print('v2')\n", encoding="utf-8")
+        copies = mod.snapshot(cible, horodatage="T3")
+        cas.append(("seul le fichier modifie est recopie", copies == ["hooks/un_hook.py"]))
+        cas.append(("l'ancienne version reste consultable",
+                    (auto / "T1" / "hooks" / "un_hook.py").read_text(encoding="utf-8")
+                    == "print('v1')\n"))
+
+        # Rotation : sans elle, le filet remplit le disque en silence.
+        plafond = mod.MAX_SNAPSHOTS
+        try:
+            mod.MAX_SNAPSHOTS = 3
+            for i in range(5):
+                hook.write_text(f"print('r{i}')\n", encoding="utf-8")
+                mod.snapshot(cible, horodatage=f"R{i}")
+            restants = sorted(p.name for p in auto.iterdir() if p.is_dir())
+            cas.append(("rotation : au plus MAX_SNAPSHOTS conserves", len(restants) == 3))
+            cas.append(("rotation : ce sont les plus recents", restants == ["R2", "R3", "R4"]))
+        finally:
+            mod.MAX_SNAPSHOTS = plafond
+
+        # Etat corrompu : on resauvegarde tout plutot que de se taire.
+        (cible / ".sauvegardes" / "empreintes.json").write_text("pas du json",
+                                                                encoding="utf-8")
+        cas.append(("empreintes illisibles -> on resauvegarde",
+                    len(mod.snapshot(cible, horodatage="T4")) == 2))
+
+        for note, ok in cas:
+            echecs += not ok
+            print(f"{'OK  ' if ok else 'FAIL'}  {note}")
+    return echecs
+
+
 if __name__ == "__main__":
     total = (
         _verifier("block_git_add_all.py", "block_git_add_all.py", CAS_GIT, "command")
@@ -712,6 +783,7 @@ if __name__ == "__main__":
         + _verifier_journal_etat()
         + _verifier_alerte_contexte()
         + _verifier_gate_modele()
+        + _verifier_autosauvegarde()
     )
     print(f"\n{'VERT' if total == 0 else 'ROUGE'} — {total} echec(s)")
     sys.exit(1 if total else 0)
