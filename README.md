@@ -22,6 +22,15 @@ ce repo ; copie déployée : `~/.claude/` sur chaque machine.
   **Sauvegarde toute cible avant de l'écraser** dans `~/.claude/.sauvegardes/deploiements/<horodatage>/` :
   c'est la correction à la cause racine de l'incident du 21/08/2026.
 - `settings.hooks.json` — le fragment de référence à fusionner dans `settings.json`.
+- `githooks/pre-commit-local` — hook pre-commit **local à ce repo** : lance le golden dès
+  qu'un commit touche `hooks/` ou `tests/`, et refuse le commit s'il est rouge. Le golden existait
+  depuis le 27/07/2026 mais ne tournait qu'à la main : on pouvait commiter un hook cassé et ne le
+  découvrir qu'au déploiement suivant. Contre-épreuve du 25/08/2026 : un `shutil.move` glissé à la
+  place d'un `copy2` dans le filet est bien refusé. Installation :
+
+  ```bash
+  cp githooks/pre-commit-local .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+  ```
 
 ## Déploiement sur une machine
 

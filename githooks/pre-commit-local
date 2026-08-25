@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Hook pre-commit LOCAL de CE depot.
+#
+# Une regression de hook ne doit pas pouvoir etre commitee. Le golden
+# (tests/test_hooks.py) existait depuis le 27/07/2026 mais ne tournait qu'a la
+# main et dans deploy.ps1 : on pouvait donc commiter un hook casse et ne le
+# decouvrir qu'au deploiement suivant. Ce hook ferme ce trou.
+#
+# Il ne tourne QUE si le commit touche hooks/ ou tests/ : un commit de README
+# n'a aucune raison de payer le golden.
+#
+# Installation (le shim global core.hooksPath enchaine sur ce fichier) :
+#   cp githooks/pre-commit-local .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+
+set -u
+racine="$(git rev-parse --show-toplevel)"
+concernes="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^(hooks/|tests/)' || true)"
+
+if [ -z "$concernes" ]; then
+    exit 0
+fi
+
+echo "pre-commit : hooks/ ou tests/ touches -> golden des hooks..."
+if ! python "$racine/tests/test_hooks.py" > /tmp/golden-local.log 2>&1; then
+    echo ""
+    echo "REFUS : le golden des hooks est ROUGE. Rien n'est commite." >&2
+    # Ancres en debut de ligne : « echec » tout court matchait aussi des lignes OK
+    # dont le libelle contient le mot (contre-epreuve du 25/08/2026).
+    resume="$(grep -E "^FAIL|^ROUGE" /tmp/golden-local.log | head -20)"
+    if [ -n "$resume" ]; then
+        echo "$resume" >&2
+    else
+        # Le golden peut mourir sur une exception avant d'imprimer le moindre FAIL
+        # (contre-epreuve : un `shutil.move` a la place d'un `copy2` fait disparaitre
+        # le fichier que le test suivant relit). Sans ce repli, le refus etait muet.
+        echo "  (golden interrompu avant son resume - fin du log :)" >&2
+        tail -6 /tmp/golden-local.log >&2
+    fi
+    echo "" >&2
+    echo "  Detail complet : /tmp/golden-local.log" >&2
+    echo "  Relancer       : python tests/test_hooks.py" >&2
+    exit 1
+fi
+echo "pre-commit : golden vert."
+exit 0
