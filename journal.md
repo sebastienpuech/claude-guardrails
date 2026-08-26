@@ -14,12 +14,23 @@
 
 ## État actuel (glissant)
 
-- **Couche globale : 2 sections neuves + 1 filet + 1 garde-fou (25/08).** `CLAUDE.md` global porte
-  désormais « Contrat d'entrée » et « Sous-agents » (issus du rapport `/insights` du 24/08),
-  déployés et conformes (`deploy.ps1 -Verifier` = exit 0). Hook Stop `autosauvegarde_config.py` :
-  copie **non destructive** de tout fichier de `~/.claude` qui change, vers `.sauvegardes/auto/`.
-  `deploy.ps1` sauvegarde désormais toute cible avant de l'écraser. Le golden (149 cas) tourne en
-  **pre-commit** dès qu'un commit touche `hooks/` ou `tests/` — contre-épreuve passée.
+- **Garde-fous passés au banc adversarial (25/08) : 17 contournements trouvés, 14 fermés,
+  3 rendus visibles.** Le résultat qui compte n'est pas un trou mais une affirmation fausse :
+  `pre_commit_taille.py` garantissait dans sa docstring que « toutes les routes convergent sur
+  le commit », et `block_git_add_all.py` s'appuyait sur cette phrase pour justifier de laisser
+  ses propres trous ouverts. `git merge --no-ff` ne déclenche pas `pre-commit` : les deux étages
+  avaient le même angle mort, chacun croyant que l'autre couvrait. Détail dans l'entrée du 25/08.
+  État : `githooks/pre-merge-commit` posé, `hooks/alerte_commit_gros.py` (post-commit non
+  bloquant) pour les 3 routes non blocables, nouvelle suite `tests/test_garde_fous_git.py`
+  (10 scénarios), golden Claude Code à **164 cas** (+15). Les deux suites tournent au pre-commit
+  et dans `deploy.ps1`.
+
+- **Couche globale : 2 sections neuves + 1 filet (25/08).** `CLAUDE.md` global porte désormais
+  « Contrat d'entrée » et « Sous-agents » (issus du rapport `/insights` du 24/08), déployés et
+  conformes (`deploy.ps1 -Verifier` = exit 0). Hook Stop `autosauvegarde_config.py` : copie
+  **non destructive** de tout fichier de `~/.claude` qui change, vers `.sauvegardes/auto/`.
+  Vérifié le 25/08 à 12:11 — il a bien mordu, 16 fichiers sauvegardés ; le point restait
+  « non vérifié » jusque-là. `deploy.ps1` sauvegarde toute cible avant de l'écraser.
   Restent ouverts : `rappel_carte.py` non commité, `rappel_revue.py` déployé sans source,
   `verifie_lisibilite_reponse.py` absent de `$attendus`, et l'ordre des entrées de ce journal
   qui contredit `journal_etat.py` (détail dans l'entrée du 25/08).
@@ -39,7 +50,10 @@
 - **Garde-fous git désormais versionnés.** `hooks/pre_commit_taille.py` et `githooks/`
   (shims `core.hooksPath`) vivaient depuis le 21/08 uniquement dans `~/.claude/`.
   `.gitattributes` force le LF sur les shims : en CRLF, leur shebang casse en silence.
-  **`deploy.ps1` ne synchronise pas `githooks/`** — seul écart source/déployé connu.
+  ~~`deploy.ps1` ne synchronise pas `githooks/`~~ — **corrigé le 25/08** : étape [4/6] pour le
+  déploiement, étape [5/6] pour le branchement (`core.hooksPath`). Présence et branchement sont
+  deux choses : un shim copié mais non branché ne s'exécute jamais. Plus d'écart source/déployé
+  connu.
 
 - **Section « Autonomie » dans `CLAUDE-global.md`, déployée le 23/08.** 14 règles tirées de
   l'audit questions (538 questions/45 j, ~48 % prédictibles ; rapport :
@@ -358,3 +372,107 @@ Quatrième constat, non corrigé : ce journal range ses entrées en ordre **croi
 récente en bas), alors que `journal_etat.py` injecte les trois **premières** trouvées. Le hook
 montre donc ici les entrées du 20/08, pas les dernières. À arbitrer : inverser le fichier ou le
 hook.
+
+### 2026-08-25 (suite) — la red team : 17 contournements, et une docstring qui mentait
+
+Boucle adversariale lancée sur les trois garde-fous exécutables, dernière des trois pistes
+« à l'horizon » du rapport `/insights`. Cadre écrit avant de tirer, comme l'exige la règle des
+5 lignes : objectif, baseline (149 cas golden, **aucun adversarial**), budget ~30 variantes par
+garde-fou, succès = 1 contournement transformé en test rouge, abandon = 0 trou sur le corpus
+complet. 41 variantes jouées sur des dépôts jetables.
+
+**Règle de comptage posée d'avance, et c'est elle qui donne sa valeur au résultat.** Un
+contournement ne compte que s'il satisfait DEUX conditions : le garde-fou laisse passer, ET la
+commande fait réellement ce qu'elle prétend. C'est la leçon du sabotage inerte de la veille — un
+`MAX_SNAPSHOTS = 0` qui ne cassait aucun test parce que `[:-0]` vaut `[:0]`. Sur les 41
+variantes, 3 sont passées « ratées mais sans effet » : elles ne sont pas comptées.
+
+**Étage 1 — `block_git_add_all.py`, 13 trous, tous fermés.** Deux causes racines, et les deux
+sont la même erreur de conception : **énumérer**.
+- 6 options globales absentes de la liste (`git -P add -A`, `--literal-pathspecs`,
+  `--no-optional-locks`, `--namespace=`, `--no-replace-objects`, `--glob-pathspecs`). Le
+  mécanisme est plus vicieux qu'un simple oubli : une option hors liste faisait échouer le motif
+  **entier**, si bien que le hook ne regardait même plus les arguments. Ajouter une option
+  inconnue *désarmait* le garde-fou au lieu de le contourner.
+- 6 pathspecs « tout » absents de la liste fermée (`:/*`, `:(glob)**`, `:(top,glob)**`, `:!zzz`,
+  `:(exclude)zzz`, `**`). `:!zzz` — « tout sauf zzz » — dit tout : une exclusion est une
+  inclusion de tout le reste. La syntaxe des pathspecs magiques en fabrique à volonté.
+- 1 forme qui lit les chemins ailleurs (`--pathspec-from-file`).
+
+Correction : accepter **n'importe quelle** option entre `git` et `add` (à cet endroit de la ligne,
+seule une globale peut apparaître, donc le motif générique n'élargit pas la surface), et inverser
+la charge sur les pathspecs — un `git add` scopé nomme ses fichiers, donc tout argument
+commençant par `:` ou contenant `*` est refusé. Aucun faux positif possible sous Windows, où ces
+deux caractères sont interdits dans un nom de fichier. 15 cas ajoutés au golden ; contre-épreuve
+avec l'ancien hook : 15 échecs.
+
+**Étage 2 — la vraie trouvaille est une phrase, pas un trou.** `pre_commit_taille.py` affirmait
+dans sa docstring que « toutes les routes convergent sur le commit », et `block_git_add_all.py`
+citait cette garantie pour justifier de laisser ses 6 trous connus ouverts. Mesure sur 11
+scénarios : **4 routes font entrer un changement massif dans l'historique sans qu'aucun garde-fou
+parle.** Les deux étages avaient le même angle mort, et chacun s'appuyait sur l'autre. Une
+docstring fausse ne se contente pas de désinformer : elle sert d'argument pour ne pas corriger.
+
+- `git merge --no-ff` déclenche `pre-merge-commit`, pas `pre-commit`. Le hook n'existait pas.
+  Une fusion supprimant 40 fichiers / 1200 lignes entrait sans un mot. **Fermé** :
+  `githooks/pre-merge-commit`, porte `git merge --no-verify` préservée et testée.
+- `git revert`, `git cherry-pick`, `git rebase` : sonde avec 13 hooks candidats installés en
+  mouchards — **aucun hook « pre- » ne passe** sur ces routes, seul `prepare-commit-msg`
+  s'exécute avant la création du commit.
+
+**`prepare-commit-msg` essayé puis écarté sur mesure, pas sur intuition.** Il aurait
+techniquement marché (Q1 : un exit non nul avorte bien le commit ; Q4 : le staging y est
+mesurable). Deux mesures l'ont disqualifié : Q2, `--no-verify` **ne le neutralise pas** — y
+mettre le contrôle refermait la porte de secours documentée, et un garde-fou sans porte se
+contourne dans le dos ; Q3, il reçoit `$2 == "message"` aussi bien pour un commit ordinaire que
+pour un revert, donc impossible de cibler les seules routes du séquenceur. À quoi s'ajoute un
+argument de fond : bloquer un revert serait un faux positif par construction — rejouer un commit
+nommé qui supprimait 4 000 lignes en supprime 4 000, et c'est ce qu'on a demandé. Ces routes
+rejouent un commit **nommé**, elles ne peuvent pas avaler par accident le travail d'une autre
+session, qui est l'incident d'origine de la règle.
+
+D'où le choix assumé : **3 trous rendus visibles plutôt que fermés.** `hooks/alerte_commit_gros.py`,
+post-commit non bloquant, signale tout commit au-dessus des seuils en nommant le SHA. Il ne parle
+que là où aucun garde-fou n'a pu parler avant : les 3 routes du séquenceur, et les `--no-verify`
+délibérés. Muet sur un commit ordinaire — une alerte qui hurle tout le temps ne vaut pas mieux
+qu'une alerte muette, et le cas négatif est dans la suite.
+
+**Deux fois le banc a menti, et les deux fois ce sont les témoins qui l'ont dit.** Premier
+passage : « 0 trou sur 30 ». `bash` appelé depuis Python résolvait vers `C:\Windows\System32\bash.exe`,
+le lanceur WSL sans distribution installée ; toutes les attaques échouaient pour une raison sans
+rapport. Repéré parce que les **témoins** (`git add -A` et consorts) staggeaient eux aussi 0 chemin.
+Sans témoins dans le corpus, le rapport concluait « tes garde-fous sont étanches » — l'exact
+contraire de la vérité. Second banc : il installait sa propre copie du garde-fou en hook **local**,
+donc ne voyait pas les shims globaux, donc ratait le trou de la fusion. Un banc qui monte son
+propre décor teste un montage imaginaire. Corrigé : les dépôts jetables héritent du vrai montage.
+
+**Nouvelle suite `tests/test_garde_fous_git.py`** — 10 scénarios (blocages, portes de secours,
+alertes, cas négatif), plus un contrôle de montage complet en préalable : présence des 3 shims
+**et** branchement de `core.hooksPath`. Contre-épreuve : shim remplacé par `exit 0` → le scénario
+de fusion passe au rouge. C'est le sabotage fin, celui qui manquait la veille. Le pre-commit du
+dépôt lance désormais les deux suites, et se déclenche aussi sur `githooks/`.
+
+**`deploy.ps1` corrigé dans la foulée** (commit séparé). Les shims git étaient installés **à la
+main** depuis le 21/08 : le script ne les déployait pas, et `-Verifier` ne signalait pas leur
+absence. Le `pre-merge-commit` posé le matin même aurait disparu au premier redéploiement et
+n'aurait jamais existé sur une autre machine — le défaut du 21/08, un étage plus haut. Étape
+[4/6] pour le déploiement, [5/6] pour le branchement. Liste **explicite** des shims (un `*`
+aurait poussé le hook local du dépôt dans la couche globale), assortie d'un contrôle
+d'exhaustivité : tout fichier de `githooks/` hors catégorie est signalé, exit 2. Sans lui, le
+défaut qu'on venait de corriger se reformait au prochain shim ajouté. Contre-épreuves :
+`githooks/pre-push` factice → signalé, exit 2 (sans lui, exit 0) ; `core.hooksPath` absent → suite
+git au rouge, testé avec `GIT_CONFIG_GLOBAL=/dev/null`, donc **sans jamais toucher la config
+réelle**.
+
+**Question du tour précédent, tranchée** : oui, le hook `Stop` a tiré tout seul.
+`~/.claude/.sauvegardes/auto/2026-08-25_121146/` contient 16 fichiers — CLAUDE.md, les 13 hooks,
+les 2 settings. Le point cesse d'être une hypothèse.
+
+**Non prouvé, et écrit comme tel** : la branche « POINTE AILLEURS » de l'étape [5/6] de
+`deploy.ps1` n'a pas été éprouvée par sabotage. La tester exigeait soit d'écrire dans la config
+git globale — du vivant, qui demande un accord explicite —, soit un `$HOME` factice, que
+PowerShell interdit (variable en lecture seule) et que la suite git refuse de son côté. La
+logique équivalente est couverte par le test Python ; la branche PowerShell repose sur une
+lecture, pas sur un test.
+
+Commits : `8845be8` (red team), `0d5cb1b` (deploy.ps1). Poussés.
