@@ -719,6 +719,109 @@ def _verifier_gate_modele():
     return echecs
 
 
+def _verifier_alerte_parc():
+    """alerte_parc.py : remonte les anomalies du parc a l'ouverture de session.
+
+    Le hook lit `~/.infra/check-parc.rapport.txt`. On ne peut pas fabriquer les 4 etats
+    sur le vrai fichier — et surtout on ne DOIT pas y toucher, c'est de la production.
+    On importe donc le module et on detourne son chemin vers un fichier jetable : c'est
+    la seule facon de tester l'etat « rapport vieux de 3 jours » sans attendre 3 jours.
+    """
+    import importlib.util
+    import shutil
+    import tempfile
+    from datetime import datetime, timedelta
+
+    print("\n--- alerte_parc.py (SessionStart) ---")
+    spec = importlib.util.spec_from_file_location("alerte_parc", HOOKS / "alerte_parc.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    dossier = Path(tempfile.mkdtemp(prefix="parc_"))
+    faux = dossier / "rapport.txt"
+    mod.RAPPORT = faux
+    maintenant = datetime.now()
+
+    def poser(quand, corps, bom=False):
+        prefixe = "﻿" if bom else ""
+        faux.write_text(f"{prefixe}{quand.isoformat(timespec='seconds')}\n{corps}",
+                        encoding="utf-8")
+
+    echecs = 0
+    try:
+        # 1. frais + 0 anomalie -> silence
+        poser(maintenant, "[PARC] OK - 30 taches controlees, 0 anomalie.")
+        silence = mod.message() is None
+
+        # 2. frais + anomalies -> il les remonte
+        poser(maintenant, "[PARC] 2 anomalie(s) sur 30 taches\n\n[!] a - ECHEC\n[!] b - ECHEC")
+        m_anomalies = mod.message() or ""
+
+        # 3. rapport perime -> alarme meta (le surveillant lui-meme est tombe)
+        poser(maintenant - timedelta(days=3), "[PARC] OK - 30 taches controlees, 0 anomalie.")
+        m_vieux = mod.message() or ""
+
+        # 4. fichier absent -> le dit, ne se tait pas
+        faux.unlink()
+        m_absent = mod.message() or ""
+
+        # 5. BOM de PowerShell 5.1 : sans utf-8-sig, la date ne se parse pas et le hook
+        #    croirait le rapport illisible alors qu'il est parfaitement frais.
+        poser(maintenant, "[PARC] 1 anomalie(s) sur 30 taches\n\n[!] z - ECHEC", bom=True)
+        m_bom = mod.message() or ""
+
+        # 6. plafond : un parc en vrac ne doit pas noyer l'ouverture de session
+        poser(maintenant, "[PARC] 40 anomalie(s)\n\n" + "\n".join(f"[!] t{i}" for i in range(40)))
+        m_plafond = mod.message() or ""
+
+        # 6bis. TROU du 26/08, attrape par ce test avant tout commit : « 10 anomalie(s) »
+        #       contient la sous-chaine « 0 anomalie ». La premiere version du hook se
+        #       taisait donc sur 10, 20, 30 ou 40 anomalies — le pire cas possible pour
+        #       un veilleur. On garde un cas par multiple piegeux.
+        m_dizaines = []
+        for n in (10, 20, 30, 40):
+            poser(maintenant, f"[PARC] {n} anomalie(s) sur 30 taches\n\n[!] x - ECHEC")
+            m_dizaines.append(mod.message() or "")
+
+        # 7. horodatage illisible -> traite comme absent, jamais d'exception
+        faux.write_text("pas une date\n[PARC] 5 anomalie(s)", encoding="utf-8")
+        m_casse = mod.message() or ""
+
+        cas = [
+            ("frais + 0 anomalie -> SILENCE (le silence est le signal de normalite)", silence),
+            ("frais + anomalies -> les remonte", "2 anomalie" in m_anomalies and "[!] a" in m_anomalies),
+            ("rapport perime -> alarme meta : le controle quotidien est tombe",
+             "n'a pas tourne depuis" in m_vieux),
+            ("rapport perime -> NE se tait PAS, meme si son contenu dit 0 anomalie",
+             m_vieux != "" and "0 anomalie" not in m_vieux),
+            ("fichier absent -> le dit", "aucun rapport" in m_absent),
+            ("BOM PowerShell -> lu quand meme (utf-8-sig)", "1 anomalie" in m_bom),
+            ("BOM PowerShell -> PAS traite comme illisible", "aucun rapport" not in m_bom),
+            ("plafond a MAX_LIGNES + renvoi vers le fichier",
+             len(m_plafond.splitlines()) <= mod.MAX_LIGNES + 1 and "de plus" in m_plafond),
+            ("TROU 26/08 : 10/20/30/40 anomalies ne sont PAS lues comme « 0 anomalie »",
+             all(m and "anomalie" in m for m in m_dizaines)),
+            ("horodatage illisible -> message d'absence, aucune exception",
+             "aucun rapport" in m_casse),
+        ]
+        for titre, ok in cas:
+            echecs += not ok
+            print(f"{'OK  ' if ok else 'FAIL'}  {titre}")
+
+        # 8. le vrai hook, en bout en bout : fail-open et sortie muette si rien a dire
+        mod.RAPPORT = dossier / "inexistant-mais-frais.txt"
+        p = subprocess.run(
+            [sys.executable, str(HOOKS / "alerte_parc.py")],
+            input="{ceci n'est pas du json", capture_output=True, text=True,
+        )
+        ok = p.returncode == 0
+        echecs += not ok
+        print(f"{'OK  ' if ok else 'FAIL'}  stdin illisible -> fail-open, exit 0 (hook informatif)")
+    finally:
+        shutil.rmtree(dossier, ignore_errors=True)
+    return echecs
+
+
 def _verifier_autosauvegarde():
     """autosauvegarde_config.py : copie ce qui change, ne deplace JAMAIS rien.
 
@@ -804,6 +907,7 @@ if __name__ == "__main__":
         + _verifier_alerte_contexte()
         + _verifier_gate_modele()
         + _verifier_autosauvegarde()
+        + _verifier_alerte_parc()
     )
     print(f"\n{'VERT' if total == 0 else 'ROUGE'} — {total} echec(s)")
     sys.exit(1 if total else 0)
