@@ -110,9 +110,25 @@ foreach ($hook in Get-ChildItem (Join-Path $Source "hooks") -Filter *.py) {
 # Le fichier est actif seulement si settings.json porte "outputStyle": "<nom>" ;
 # ce script ne l'ecrit pas (cf. etape 7), il se contente de le verifier.
 Write-Host "`n[4/7] output-styles/ -> ~/.claude/output-styles/"
+$sourceStyles = Join-Path $Source "output-styles"
 $dossierStyles = Join-Path $Cible "output-styles"
 if (-not (Test-Path $dossierStyles)) { New-Item -ItemType Directory $dossierStyles | Out-Null }
-foreach ($style in Get-ChildItem (Join-Path $Source "output-styles") -Filter *.md) {
+# Meme garde qu'a l'etape 2 : la source peut manquer dans un extrait filtre. On le
+# signale et on poursuit, au lieu de laisser Get-ChildItem lever une exception brute.
+if (-not (Test-Path $sourceStyles)) {
+    Write-Host "      ABSENT : $sourceStyles introuvable, etape ignoree." -ForegroundColor Yellow
+    $derive++
+} else {
+foreach ($style in Get-ChildItem $sourceStyles -Filter *.md) {
+    # Claude Code liste tout .md de ce dossier comme un style selectionnable, meme un
+    # fichier de doc sans frontmatter (il prend alors son nom de fichier). Incident du
+    # 28/08 : mesure-bascule.md, une note de mesure, s'est retrouve propose dans /config.
+    # On ne deploie que ce qui declare vraiment un style.
+    $entete = Get-Content $style.FullName -TotalCount 6 -Encoding UTF8
+    if (($entete -join "`n") -notmatch '(?m)^name:\s*\S') {
+        Write-Host "      $($style.Name) : IGNORE (pas de frontmatter 'name:' - ce n'est pas un style)." -ForegroundColor DarkGray
+        continue
+    }
     $dst = Join-Path $dossierStyles $style.Name
     $identique = (Test-Path $dst) -and
                  ((Get-FileHash $style.FullName).Hash -eq (Get-FileHash $dst).Hash)
@@ -127,18 +143,64 @@ foreach ($style in Get-ChildItem (Join-Path $Source "output-styles") -Filter *.m
         Write-Host "      $($style.Name) : deploye."
     }
 }
+}
 # Un style deploye mais non selectionne ne s'applique jamais : l'ecart est muet
 # cote Claude Code, donc il se signale ici.
-$styleActif = $null
+#
+# Durci le 2026-08-28 apres la revue adversariale. Constater qu'UN outputStyle est
+# declare ne suffit pas : une faute de frappe ("Pyramyde") passait au vert. Et la cle
+# vit au niveau UTILISATEUR, le plus FAIBLE des niveaux de precedence de Claude Code
+# (managed > ligne de commande > projet local > projet partage > utilisateur). Un
+# `/config` lance depuis n'importe quel projet ecrit dans le settings.local.json de ce
+# projet et bat silencieusement le style global, pour ce projet-la seulement. Aucune
+# erreur, aucun message : le style cesse simplement de s'appliquer.
 $fichierReglages = Join-Path $Cible "settings.json"
+$styleActif = $null
 if (Test-Path $fichierReglages) {
     $styleActif = (Get-Content $fichierReglages -Raw | ConvertFrom-Json).outputStyle
 }
-if ($styleActif) {
-    Write-Host "      settings.json : outputStyle = '$styleActif'."
-} else {
+
+$stylesDisponibles = @(Get-ChildItem $dossierStyles -Filter *.md -ErrorAction SilentlyContinue |
+                       ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Name) })
+
+if (-not $styleActif) {
     Write-Host "      settings.json : AUCUN outputStyle declare - le style ne s'applique pas." -ForegroundColor Yellow
     $derive++
+} elseif ($stylesDisponibles -ccontains $styleActif) {
+    Write-Host "      settings.json : outputStyle = '$styleActif' (fichier present)."
+} else {
+    # -ccontains est sensible a la casse : "pyramide" n'est pas "Pyramide".
+    Write-Host "      settings.json : outputStyle = '$styleActif' mais AUCUN FICHIER DE CE NOM." -ForegroundColor Red
+    if ($stylesDisponibles) {
+        Write-Host "        -> deployes ici : $($stylesDisponibles -join ', ') (la casse compte)."
+    } else {
+        Write-Host "        -> aucun style deploye dans $dossierStyles."
+    }
+    Write-Host "        -> Claude Code retombe sur le style par defaut, sans le dire."
+    $derive++
+}
+
+# Concurrence : un reglage de projet gagne contre le reglage utilisateur.
+$reglagesProjets = @()
+foreach ($racine in @((Join-Path $HOME "dev"), (Join-Path $HOME "ia-workspace"))) {
+    if (-not (Test-Path $racine)) { continue }
+    $reglagesProjets += Get-ChildItem $racine -Recurse -Depth 3 -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -in @("settings.json", "settings.local.json") -and
+                       $_.DirectoryName -like "*\.claude" }
+}
+$concurrents = @()
+foreach ($f in $reglagesProjets) {
+    try {
+        $valeur = (Get-Content $f.FullName -Raw -ErrorAction Stop | ConvertFrom-Json).outputStyle
+    } catch { continue }
+    if ($valeur) { $concurrents += "$valeur  <-  $($f.FullName)" }
+}
+if ($concurrents) {
+    Write-Host "      OUTPUTSTYLE CONCURRENT dans un projet - il gagne contre le reglage global :" -ForegroundColor Red
+    $concurrents | ForEach-Object { Write-Host "        $_" }
+    $derive++
+} else {
+    Write-Host "      aucun outputStyle concurrent dans dev/ ni ia-workspace."
 }
 
 # --- 5. githooks/ : les shims git globaux ----------------------------------
