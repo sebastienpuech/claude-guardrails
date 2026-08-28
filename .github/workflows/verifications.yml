@@ -1,0 +1,37 @@
+# Les deux suites annoncees dans le README, rejouees a chaque push et sur chaque PR.
+#
+# Pourquoi ce fichier existe : le README dit "run them and disagree with the numbers".
+# Tant que les suites ne tournaient qu'a la main sur la machine de l'auteur, cette phrase
+# reposait sur sa parole. Ici elles tournent sur une machine qu'il ne controle pas.
+#
+# `deploy.ps1` n'est PAS lance ici, meme en mode -Verifier : il pose
+# `git config --global core.hooksPath`, donc il modifie la machine qui l'execute.
+name: verifications
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Aucune dependance : les deux suites tournent sur la bibliotheque standard.
+      - name: Suite hooks
+        run: python tests/test_hooks.py
+
+      - name: Suite garde-fous git
+        run: python tests/test_garde_fous_git.py

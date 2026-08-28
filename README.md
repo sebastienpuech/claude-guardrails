@@ -1,174 +1,113 @@
-# ce depot — configuration Claude Code globale
+# claude-guardrails
 
-Config de niveau **utilisateur** (toutes sessions, tous repos), versionnée ici. Source de vérité :
-ce repo ; copie déployée : `~/.claude/` sur chaque machine.
+[![verifications](https://github.com/sebastienpuech/claude-guardrails/actions/workflows/verifications.yml/badge.svg)](https://github.com/sebastienpuech/claude-guardrails/actions/workflows/verifications.yml)
 
-## Contenu
+*(Version française : [README.fr.md](README.fr.md))*
 
-- `CLAUDE-global.md` — **source de vérité** du CLAUDE.md global. Nommé sans le nom canonique
-  pour ne pas être auto-chargé comme mémoire de sous-dossier quand on travaille dans ce repo.
-- `hooks/block_cloud_cache.py` — hook PreToolUse : bloque toute écriture dans
-  `local-agent-mode-sessions` (cache cloud volatile, toute édition y est perdue).
-- `hooks/block_git_add_all.py` — hook PreToolUse : refuse tout `git add` non scopé au chantier
-  (incident : 4 545 lignes de suppression avalées par le commit d'une autre session).
-- `hooks/autosauvegarde_config.py` — hook Stop : filet **non destructif** sur la config. À chaque
-  fin de tour, tout fichier de `~/.claude` (CLAUDE.md, `settings*.json`, `hooks/*.py`) dont le
-  contenu a changé est **copié** dans `~/.claude/.sauvegardes/auto/<horodatage>/` (rotation à 30).
-  Incident du 21/08/2026 : un déploiement a écrasé deux hooks non commités, reconstitués à la main
-  dans les transcripts. Il copie, il ne déplace jamais — un `git stash` viderait le plan de travail.
-- `hooks/alerte_commit_gros.py` — hook git `post-commit`, **non bloquant**. `git revert`,
-  `cherry-pick` et `rebase` ne déclenchent aucun hook « pre- » : ils ne sont donc pas blocables
-  sans fermer la porte `--no-verify`. Cette alerte les rend visibles après coup, en nommant le
-  SHA. Elle reste muette sur un commit ordinaire.
-- `githooks/pre-merge-commit` — shim global. `git merge --no-ff` ne déclenche **pas**
-  `pre-commit` : une fusion supprimant 40 fichiers entrait sans un mot (red team du 25/08/2026).
-  Porte de secours préservée : `git merge --no-verify`.
-- `tests/test_hooks.py` — golden des hooks Claude Code : contournement des deux bloquants,
-  comportement des autres. 164 cas, `exit 0` = vert.
-- `tests/test_garde_fous_git.py` — golden des garde-fous **git** : 10 scénarios joués sur des
-  dépôts jetables (blocages, portes de secours, alertes, et le cas négatif du petit commit qui
-  doit rester silencieux). Les dépôts héritent du vrai montage — un banc qui installe ses propres
-  hooks teste un montage imaginaire, et c'est ce qui avait masqué le trou de la fusion.
-- `deploy.ps1` — déploie et vérifie la conformité. Refuse de déployer si l'un des deux goldens est
-  rouge. **Sauvegarde toute cible avant de l'écraser** dans
-  `~/.claude/.sauvegardes/deploiements/<horodatage>/` : c'est la correction à la cause racine de
-  l'incident du 21/08/2026. Depuis le 25/08 il déploie aussi `githooks/` et vérifie que
-  `core.hooksPath` pointe bien dessus — présence et branchement sont deux choses, et un shim non
-  branché ne s'exécute jamais.
-- `settings.hooks.json` — le fragment de référence à fusionner dans `settings.json`.
-- `githooks/pre-commit-local` — hook pre-commit **local à ce repo** : lance le golden dès
-  qu'un commit touche `hooks/` ou `tests/`, et refuse le commit s'il est rouge. Le golden existait
-  depuis le 27/07/2026 mais ne tournait qu'à la main : on pouvait commiter un hook cassé et ne le
-  découvrir qu'au déploiement suivant. Contre-épreuve du 25/08/2026 : un `shutil.move` glissé à la
-  place d'un `copy2` dans le filet est bien refusé. Installation :
+Guardrails for a coding agent, each one born from an incident that actually happened, and each
+one covered by a test that tries to defeat it.
 
-  ```bash
-  cp githooks/pre-commit-local .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
-  ```
+Blocking an agent from running `git add -A` is easy. What is harder, and what this repository
+is actually about: proving the block still fires when the input is malformed, keeping a written
+record of the seventeen ways it was bypassed, and admitting in public which three of them cannot
+be closed at all.
 
-## Déploiement sur une machine
+## The part that is unusual
 
-```powershell
-powershell -ExecutionPolicy Bypass -File deploy.ps1            # déployer
-powershell -ExecutionPolicy Bypass -File deploy.ps1 -Verifier  # constater une dérive, n'écrit rien
+**The guardrails were attacked on purpose, and the failures are published.** One red-team pass
+found 17 bypasses. 14 were closed. The remaining 3 are documented as unclosable rather than
+quietly dropped: `git revert`, `cherry-pick` and `rebase` fire no `pre-` hook at all, so the
+repository stops pretending to block them and raises a visible alert afterwards instead. A
+guardrail nobody has tried to defeat is decoration.
+
+**Fail-closed is proven, not asserted.** `tests/test_hooks.py` feeds deliberately broken JSON to
+both blocking hooks and requires exit code 2. The question worth asking of any guardrail — does
+it disappear silently when it crashes? — is answered here by a test rather than by a claim.
+Informational hooks fail *open* by design, and that asymmetry is tested too.
+
+**Every hook carries its scar, dated.** The docstrings do not say what the hook does; they say
+what went wrong. `block_git_add_all.py` exists because one session's commit swallowed 4,545 lines
+of deletions. `autosauvegarde_config.py` exists because a deployment overwrote two uncommitted
+hooks on 2026-08-21, recovered by hand from transcripts. `alerte_parc.py` exists because a
+monitor computed anomalies every morning for 13 days and told nobody: its only output channel
+needed a token that had never been configured. A silent watchman is worse than no watchman,
+because everything looks calm.
+
+## What is actually verified
+
+185 test cases across two suites, re-run on 2026-08-28. Python 3.10+, no dependencies.
+
+```bash
+python tests/test_hooks.py           # 175 cases — hooks, fail-closed, path handling
+python tests/test_garde_fous_git.py  #  10 cases — git guardrails, bypass attempts
 ```
 
-`deploy.ps1` fait les étapes 1-2 ci-dessous, vérifie l'étape 3 sans jamais réécrire
-`settings.json` (c'est de la config utilisateur : modèle, plugins, thème), et refuse de
-déployer un hook dont le golden est rouge. Il vérifie aussi qu'aucune **clé non documentée**
-ne traîne dans une entrée de hook — c'est ce qui aurait attrapé l'incident du `if` (cf. Pièges).
+Both exit 0. On a fresh clone you will see 175 cases run and the second suite report
+`IGNORE`: it exercises the *real* installation — shims in `~/.claude/githooks/` plus
+`core.hooksPath` — rather than an isolated copy, so it has nothing to test until you deploy. A
+half-installed setup still fails loudly; only a machine with nothing installed at all is skipped.
+That is also why the CI badge above covers 175 cases, not 185.
 
-Les étapes manuelles restent documentées pour une machine sans PowerShell :
+## What this does not do
 
-1. Copier `CLAUDE-global.md` → `~/.claude/CLAUDE.md`.
-2. Copier `hooks/*.py` → `~/.claude/hooks/`.
-3. Fusionner dans `~/.claude/settings.json` (ne pas écraser l'existant) :
+- **The hook paths are placeholders.** `settings.hooks.json` ships `<HOME>/.claude/hooks/…`,
+  which you must replace with your own path. Claude Code exposes no path placeholder for
+  user-level hooks (checked against the documentation on 2026-08-28); the portable answer is to
+  package hooks as a plugin and use `${CLAUDE_PLUGIN_ROOT}`. That conversion is the next
+  milestone, and until it lands this repository is a reference to read and adapt rather than a
+  drop-in install.
+- **`pytest` collects nothing here.** The suites are hand-written runners with their own
+  reporting, invoked directly as shown above. Running `pytest` in this directory reports zero
+  tests, which looks like an empty repository and is not.
+- **CI covers the portable half only.** The 175-case suite runs on every push, on Python 3.10 and
+  3.12. The git guardrails cannot be covered there: they test a real deployment, and deploying
+  means changing the runner's global git configuration.
+- **It does not measure its own effect.** Nowhere does this repository show "since these hooks,
+  zero incidents of type X in N days". The incidents that motivated each hook are dated; the
+  absence of their recurrence is not. That is the missing number, and it is the one that would
+  settle the over-engineering question either way.
+- **`deploy.ps1` is PowerShell**, so it is Windows-first. On macOS or Linux it needs `pwsh`, and
+  it has never been run there. The hooks themselves are plain Python and portable; the deployment
+  script is not.
+- **Setting this up touches every git repository on your machine.** The `githooks/` shims only
+  fire once `core.hooksPath` is set globally, and that setting is global by nature: from then on,
+  the pre-commit and post-commit shims run in every repository you commit to, not only this one.
+  `deploy.ps1` does not set it for you — it reads the current value and prints the command for
+  you to run yourself. Deliberate, and worth knowing before you paste that command.
+- **Two hooks are wired inconsistently, and the journal says so.** `rappel_carte.py` ships in
+  `hooks/` but is declared nowhere, so it never runs. `alerte_parc.py` is checked by `deploy.ps1`
+  but missing from the `settings.hooks.json` fragment, so anyone merging that fragment as-is will
+  see a drift warning from the script itself. Both are known and recorded in `journal.md` rather
+  than quietly cleaned up before publishing.
+- **It is one person's configuration.** Count it yourself with
+  `git ls-files | xargs wc -l`; it is a few thousand lines for a single user. Whether that is
+  proportionate to the incidents documented in `journal.md`, or a harness feeding itself, the
+  repository does not answer.
 
-```json
-{
-  "permissions": {
-    "ask": ["Bash(git commit:*)"]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"<HOME>/.claude/hooks/block_cloud_cache.py\"",
-            "timeout": 15
-          }
-        ]
-      },
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"<HOME>/.claude/hooks/block_git_add_all.py\"",
-            "timeout": 15
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+## This repository is an extract
 
-4. Prouver que les garde-fous tirent (un garde-fou non testé est décoratif) : tenter un
-   `git add -A` dans un repo jetable et une écriture sous `local-agent-mode-sessions` —
-   les deux doivent être BLOQUÉS. Le `git add -A` se tente **via chaque outil couvert par
-   le matcher** (Bash *et* PowerShell) : un blocage obtenu sur l'un ne dit rien de l'autre,
-   et c'est comme ça qu'un hook à moitié mort est passé inaperçu (cf. Pièges). Vérifier
-   aussi qu'un cas légitime PASSE — `git add <fichier>` — sinon on a prouvé un blocage
-   aveugle, pas un garde-fou.
+Three files stay private and are not published here: the author's global `CLAUDE.md`, a
+machine-monitoring script, and a usage audit. Two consequences are visible from the inside.
 
-## Durcissement du 2026-07-27 (test de contournement)
+Hook docstrings cite `doctrine.md` when they explain *why* a rule exists ("fail-closed is
+principle 1"). That file is not in this repository. The citations are provenance notes, not
+dependencies: nothing needs them to read, run or modify the code, and both test suites run on a
+bare clone.
 
-« Un garde-fou qu'on n'a pas essayé de contourner est décoratif. » Les deux hooks ont été
-attaqués : **5 trous sur 13 cas**. Chacun est devenu un cas permanent de `tests/test_hooks.py`.
+`deploy.ps1` deploys the global `CLAUDE.md` at step 2. With the file absent it reports the gap
+and continues rather than crashing, so the remaining steps still run.
 
-| Contournement | avant | après |
-|---|---|---|
-| `git add --al` — git accepte tout préfixe non ambigu (vérifié en live : stage tout le repo) | passait | bloqué |
-| `git add -u` — stage toutes les suppressions suivies = **l'incident d'origine** | passait | bloqué |
-| `git add *` — glob expansé par le shell | passait | bloqué |
-| `git add :/` — pathspec racine, depuis n'importe quel sous-dossier | passait | bloqué |
-| Écriture dans le cache via `cp` / `Copy-Item` / `>` (matcher `Edit\|Write` seul) | passait | bloqué |
-| Entrée JSON illisible | fail-**open** | fail-**closed** (`exit 2`) |
+## Layout
 
-Un faux positif corrigé dans la foulée : un message de commit qui *documente* l'incident était
-lu comme une commande. Le contenu d'un `-m` / `-F` est du texte, il est retiré avant analyse.
+| Path | What it is |
+|---|---|
+| `hooks/` | The hooks themselves. Blocking ones exit 2; informational ones never block. |
+| `githooks/` | Git-side hooks: pre-commit, post-commit, pre-merge-commit. |
+| `tests/` | The two suites, including the bypass attempts. |
+| `settings.hooks.json` | The wiring, with placeholder paths. |
+| `deploy.ps1` | Deployment to `~/.claude/`. Backs up before overwriting, because it once did not. |
+| `journal.md` | The dated log: what broke, what was changed, what was rejected. |
 
-`git commit -a` n'est pas traité par les hooks : il est tenu par la permission `ask` sur
-`Bash(git commit:*)`. Une règle vit à un seul étage.
+## License
 
-## Rituel trimestriel (règle de maintenance)
-
-1. Relire `CLAUDE-global.md` règle par règle : Claude l'a-t-il violée ce trimestre ?
-   Sinon, candidate à la coupe (une règle morte est du bruit qui dilue les vivantes).
-2. Vérifier que la copie déployée (`~/.claude/CLAUDE.md`) et la source ici sont identiques.
-3. Toute modification : éditer ICI, commit, puis redéployer sur chaque machine.
-
-## Pièges appris à la dure
-
-- **Chemins longs Windows** : un clone git dans un dossier à préfixe profond peut échouer
-  silencieusement au checkout (« Filename too long ») et produire un index incomplet — un
-  commit depuis cet état **supprime** les fichiers manquants. Toujours `git config
-  core.longpaths true`, cloner dans un chemin court, et vérifier `git status --porcelain`
-  avant tout commit. Incident : 299 fichiers supprimés de un-projet le 2026-07-27,
-  restaurés par commit correctif en plumbing (`read-tree` + `commit-tree`).
-
-- **Clé inconnue dans un hook : pas d'erreur, désactivation silencieuse.** Le bloc settings
-  portait une clé `"if": "Bash(git *)"` sur le hook `block_git_add_all.py`. Elle est lue
-  comme une règle de permission, donc elle exige l'outil *Bash* : sur un appel de l'outil
-  *PowerShell* la condition ne matche jamais et le hook est sauté sans le moindre message.
-  Résultat : `git add -A` passait via PowerShell — le shell principal sous Windows — pendant
-  que le même hook bloquait correctement via Bash. Aucun symptôme visible, JSON valide,
-  garde-fou à moitié mort. Diagnostiqué le 2026-07-27 avec un hook temporaire `matcher: "*"`
-  qui journalise `tool_name` ; corrigé par retrait de `if` et matcher `Bash|PowerShell`.
-
-  Deux règles qui en découlent. Ne mettre dans un hook que des clés documentées : le tri
-  fin appartient au script, qui lui échoue bruyamment. Et prouver le blocage sur **chaque**
-  outil couvert par le matcher, pas sur un seul — un `exit 2` obtenu via Bash ne dit rien
-  de PowerShell. Une preuve partielle est ce qui rend un garde-fou décoratif sans qu'on le
-  sache. *Depuis le 27/07, `deploy.ps1` refuse toute clé non documentée dans une entrée de hook.*
-
-- **Encodage Windows : deux fois la même racine, deux symptômes sans rapport apparent** (27/07).
-  Un `.ps1` écrit en UTF-8 est lu en CP1252 par Windows PowerShell 5.1 : un em dash (`E2 80 94`)
-  devient `â€"` dont l'octet `0x94` est un guillemet typographique fermant, que le parser traite
-  comme **délimiteur de chaîne**. Erreur incompréhensible, pointant une ligne sans rapport.
-  Symétriquement, la sortie d'un script Python lue par un appelant en UTF-8 lève
-  `UnicodeDecodeError` parce que la console encode en CP1252.
-
-  Règle : **le texte destiné à une machine sort en UTF-8 forcé**
-  (`sys.stdout.reconfigure(encoding="utf-8")`) ; **le code destiné à PowerShell 5.1 s'écrit
-  en ASCII strict**. Les accents dans un commentaire PowerShell sont sans danger — seuls les
-  caractères qui se décodent en guillemet cassent le parsing.
-
-- **Deux sources de vérité créées le même jour** (27/07). Ce repo a été créé à 14h56 ; une
-  session ouverte ailleurs a reconstruit la même chose à 17h dans `un-projet/claude-global/`,
-  sans le voir. Les deux étaient poussées. Consolidé ici, `claude-global/` supprimé.
-  Règle : avant de créer un foyer pour quelque chose de transverse, `gh repo list` — la liste
-  des dépôts est la seule vue exhaustive, un `find` local ne voit pas ce qui n'est pas cloné.
+MIT. See [LICENSE](LICENSE).
