@@ -211,9 +211,35 @@ def _montage_ok():
     return manques
 
 
+def _rien_de_deploye():
+    """Machine vierge : AUCUN shim et AUCUN `core.hooksPath`.
+
+    A distinguer d'un montage CASSE (un shim sur trois, ou un hooksPath qui pointe
+    ailleurs), qui doit rester un echec franc. Sans cette distinction, la suite
+    echoue sur tout clone neuf -- un inconnu qui suit le README voit du rouge, et
+    l'integration continue aussi. Ce n'est pas une regression : il n'y a
+    simplement rien a tester tant que rien n'est installe.
+    """
+    dossier = Path.home() / ".claude" / "githooks"
+    aucun_shim = not any(
+        (dossier / nom).exists() for nom in ("pre-commit", "post-commit", "pre-merge-commit")
+    )
+    chemin = subprocess.run(
+        ["git", "config", "--global", "core.hooksPath"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    ).stdout.strip()
+    return aucun_shim and not chemin
+
+
 def verifier():
     """Retourne le nombre d'echecs."""
     print("\n--- garde-fous git (etage 2, red team 25/08) ---")
+    if _rien_de_deploye():
+        print("IGNORE  aucun deploiement detecte sur cette machine.")
+        print("        Cette suite teste le montage REEL (shims dans ~/.claude/githooks/")
+        print("        + core.hooksPath), pas une copie isolee. Deployer d'abord :")
+        print("        voir deploy.ps1 et le README.")
+        return 0
     manques = _montage_ok()
     if manques:
         for m in manques:
