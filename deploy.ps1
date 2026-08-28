@@ -41,7 +41,7 @@ Write-Host "Cible  : $Cible`n"
 # Les DEUX suites : les hooks Claude Code, et les garde-fous git (etage 2, ajoute
 # le 25/08 apres la red team). Deployer avec l'une des deux rouge reviendrait a
 # propager une regression sur la machine.
-Write-Host "[1/6] Tests de contournement..."
+Write-Host "[1/7] Tests de contournement..."
 foreach ($suite in @("tests\test_hooks.py", "tests\test_garde_fous_git.py")) {
     & python (Join-Path $Source $suite) | Out-Null
     if ($LASTEXITCODE -ne 0) {
@@ -56,7 +56,7 @@ Write-Host ""
 # --- 2. CLAUDE.md ----------------------------------------------------------
 # Source nommee CLAUDE-global.md pour ne PAS etre auto-chargee comme memoire de
 # sous-dossier quand on travaille dans ce repo. Deployee sous son nom canonique.
-Write-Host "[2/6] CLAUDE-global.md -> ~/.claude/CLAUDE.md"
+Write-Host "[2/7] CLAUDE-global.md -> ~/.claude/CLAUDE.md"
 $src = Join-Path $Source "CLAUDE-global.md"
 $dst = Join-Path $Cible  "CLAUDE.md"
 $identique = (Test-Path $dst) -and
@@ -73,7 +73,7 @@ if ($identique) {
 }
 
 # --- 3. hooks --------------------------------------------------------------
-Write-Host "`n[3/6] hooks/"
+Write-Host "`n[3/7] hooks/"
 $dossierHooks = Join-Path $Cible "hooks"
 if (-not (Test-Path $dossierHooks)) { New-Item -ItemType Directory $dossierHooks | Out-Null }
 foreach ($hook in Get-ChildItem (Join-Path $Source "hooks") -Filter *.py) {
@@ -92,7 +92,47 @@ foreach ($hook in Get-ChildItem (Join-Path $Source "hooks") -Filter *.py) {
     }
 }
 
-# --- 4. githooks/ : les shims git globaux ----------------------------------
+# --- 4. output-styles/ : le style de sortie --------------------------------
+# Ajoute le 2026-08-28. Un output style modifie le SYSTEM PROMPT, la ou CLAUDE.md
+# n'est qu'un message utilisateur pose apres : c'est pour ca que la regle
+# "pyramide inversee", presente dans CLAUDE.md depuis des semaines, se diluait en
+# fin de session. Claude Code re-rappelle le style en cours de conversation, ce
+# qu'aucun CLAUDE.md ne fait.
+# Le fichier est actif seulement si settings.json porte "outputStyle": "<nom>" ;
+# ce script ne l'ecrit pas (cf. etape 7), il se contente de le verifier.
+Write-Host "`n[4/7] output-styles/ -> ~/.claude/output-styles/"
+$dossierStyles = Join-Path $Cible "output-styles"
+if (-not (Test-Path $dossierStyles)) { New-Item -ItemType Directory $dossierStyles | Out-Null }
+foreach ($style in Get-ChildItem (Join-Path $Source "output-styles") -Filter *.md) {
+    $dst = Join-Path $dossierStyles $style.Name
+    $identique = (Test-Path $dst) -and
+                 ((Get-FileHash $style.FullName).Hash -eq (Get-FileHash $dst).Hash)
+    if ($identique) {
+        Write-Host "      $($style.Name) : a jour."
+    } elseif ($Verifier) {
+        Write-Host "      $($style.Name) : DERIVE." -ForegroundColor Yellow
+        $derive++
+    } else {
+        Sauvegarder-Avant-Ecrasement $dst
+        Copy-Item $style.FullName $dst -Force
+        Write-Host "      $($style.Name) : deploye."
+    }
+}
+# Un style deploye mais non selectionne ne s'applique jamais : l'ecart est muet
+# cote Claude Code, donc il se signale ici.
+$styleActif = $null
+$fichierReglages = Join-Path $Cible "settings.json"
+if (Test-Path $fichierReglages) {
+    $styleActif = (Get-Content $fichierReglages -Raw | ConvertFrom-Json).outputStyle
+}
+if ($styleActif) {
+    Write-Host "      settings.json : outputStyle = '$styleActif'."
+} else {
+    Write-Host "      settings.json : AUCUN outputStyle declare - le style ne s'applique pas." -ForegroundColor Yellow
+    $derive++
+}
+
+# --- 5. githooks/ : les shims git globaux ----------------------------------
 # Ajoute le 2026-08-25. Ces shims etaient installes A LA MAIN depuis le 21/08 :
 # le script ne les deployait pas et `-Verifier` ne signalait pas leur absence.
 # Un garde-fou qui ne survit qu'a une copie manuelle est decoratif — c'est
@@ -103,7 +143,7 @@ foreach ($hook in Get-ChildItem (Join-Path $Source "hooks") -Filter *.py) {
 # CE depot (`pre-commit-local`), qui vont dans .git/hooks/ et n'ont rien
 # a faire dans la couche globale. Le controle d'exhaustivite juste apres empeche
 # la liste de se perimer en silence.
-Write-Host "`n[4/6] githooks/ -> ~/.claude/githooks/ (shims globaux)"
+Write-Host "`n[5/7] githooks/ -> ~/.claude/githooks/ (shims globaux)"
 $Shims = @("pre-commit", "post-commit", "pre-merge-commit")
 $dossierShims = Join-Path $Cible "githooks"
 if (-not (Test-Path $dossierShims)) { New-Item -ItemType Directory $dossierShims | Out-Null }
@@ -143,7 +183,7 @@ foreach ($f in Get-ChildItem (Join-Path $Source "githooks") -File) {
 # --- 5. core.hooksPath : sans lui, les shims ne sont jamais appeles ---------
 # Un shim parfaitement deploye mais non branche ne s'execute jamais. On verifie
 # donc le branchement, pas seulement la presence du fichier.
-Write-Host "`n[5/6] git config --global core.hooksPath"
+Write-Host "`n[6/7] git config --global core.hooksPath"
 $hooksPath = (& git config --global core.hooksPath) 2>$null
 $attenduPath = ($dossierShims -replace '\\', '/')
 if (-not $hooksPath) {
@@ -158,8 +198,8 @@ if (-not $hooksPath) {
     Write-Host "      OK      $hooksPath"
 }
 
-# --- 6. settings.json : verification seule ---------------------------------
-Write-Host "`n[6/6] settings.json (verification, aucune ecriture)"
+# --- 7. settings.json : verification seule ---------------------------------
+Write-Host "`n[7/7] settings.json (verification, aucune ecriture)"
 $fichierSettings = Join-Path $Cible "settings.json"
 if (-not (Test-Path $fichierSettings)) {
     Write-Host "      ABSENT : creer settings.json depuis settings.hooks.json." -ForegroundColor Red
