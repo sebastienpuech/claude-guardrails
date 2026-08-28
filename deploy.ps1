@@ -59,6 +59,14 @@ Write-Host ""
 Write-Host "[2/7] CLAUDE-global.md -> ~/.claude/CLAUDE.md"
 $src = Join-Path $Source "CLAUDE-global.md"
 $dst = Join-Path $Cible  "CLAUDE.md"
+# Fail-closed, pas fail-crash. La source peut manquer (extrait public filtre, copie
+# partielle) : on le dit et on passe, au lieu de laisser Get-FileHash lever une
+# exception PowerShell brute au milieu d'un deploiement a moitie fait.
+if (-not (Test-Path $src)) {
+    Write-Host "      ABSENT : $src introuvable, etape ignoree." -ForegroundColor Yellow
+    Write-Host "      (attendu dans l'extrait public : la doctrine n'y est pas publiee)"
+    $derive++
+} else {
 $identique = (Test-Path $dst) -and
              ((Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash)
 if ($identique) {
@@ -70,6 +78,7 @@ if ($identique) {
     Sauvegarder-Avant-Ecrasement $dst
     Copy-Item $src $dst -Force
     Write-Host "      deploye."
+}
 }
 
 # --- 3. hooks --------------------------------------------------------------
